@@ -5,7 +5,8 @@
 //          "ZCZC-" header, "NNNN" EOM, 853+960 Hz attention tone.
 //   PMWS : 600 baud async UART (8N1), mark 1300 Hz / space 2500 Hz,
 //          continuous-mark lead-in, "PMWS1|" header, CRC-16 checksum,
-//          EOT-terminated frames, 700 + 500 Hz dual square-wave attention tone.
+//          EOT-terminated frames, 700 + 500 Hz dual square-wave attention tone,
+//          preceded by a PREA preamble data burst.
 // A SAME decoder will never see its preamble, its tones or "ZCZC", so it cannot trigger.
 
 export const PROTOCOL = Object.freeze({
@@ -18,6 +19,8 @@ export const PROTOCOL = Object.freeze({
   tailSec: 0.06,
   EOT: 0x04,
   attnFreqs: [700, 500], // dual square-wave attention tone
+  preambleHz: 350, // tone the RECEIVER plays locally after decoding a PREA burst
+  preambleTimeoutSec: 12, // give up waiting for the header after this long
   maxMessage: 280,
 });
 
@@ -37,6 +40,7 @@ export const ALERT_TYPES = Object.freeze({
   DRIL: { name: 'Drill', severity: 'minor' },
   TEST: { name: 'Test Message', severity: 'minor' },
   ENDM: { name: 'End Of Message', severity: 'minor' },
+  PREA: { name: 'Incoming Alert', severity: 'minor' },
 });
 
 // ---------------------------------------------------------------- framing
@@ -194,12 +198,30 @@ export function repeatBursts(burst, sampleRate, count = 3, gapSec = 1) {
   return concat(parts);
 }
 
-/** Returns {header, eom} audio (Float32Array). Header includes attention tone if attnSec > 0. */
-export function buildTransmission(alert, sampleRate, { bursts = 3, gapSec = 1, attnSec = 6 } = {}) {
-  const hdr = repeatBursts(modulateBytes(buildFrame(alert), sampleRate), sampleRate, bursts, gapSec);
-  const header = attnSec > 0
-    ? concat([hdr, new Float32Array(Math.round(sampleRate * 0.8)), attentionTone(sampleRate, attnSec)])
-    : hdr;
+/** Pure sine tone played by receivers while an alert's data bursts arrive. */
+export function preambleTone(sampleRate, seconds = 1, amplitude = 0.3) {
+  const out = new Float32Array(Math.round(sampleRate * seconds));
+  const w = (2 * Math.PI * PROTOCOL.preambleHz) / sampleRate;
+  for (let i = 0; i < out.length; i++) out[i] = amplitude * Math.sin(w * i);
+  return fade(out, sampleRate, 15);
+}
+
+/**
+ * Returns {header, eom} audio (Float32Array).
+ * header = [PREA preamble burst] + 3 data bursts + [attention tone]
+ * The preamble frame carries the alert ID and, in its message field, the alert type code.
+ */
+export function buildPreambleFrame(alert) {
+  return buildFrame({ id: alert.id, type: 'PREA', location: '', expires: null, message: alert.type });
+}
+
+export function buildTransmission(alert, sampleRate, { bursts = 3, gapSec = 1, attnSec = 6, preamble = true } = {}) {
+  const silence = (s) => new Float32Array(Math.round(sampleRate * s));
+  const parts = [];
+  if (preamble) parts.push(modulateBytes(buildPreambleFrame(alert), sampleRate), silence(gapSec));
+  parts.push(repeatBursts(modulateBytes(buildFrame(alert), sampleRate), sampleRate, bursts, gapSec));
+  if (attnSec > 0) parts.push(silence(0.8), attentionTone(sampleRate, attnSec));
+  const header = concat(parts);
   const eomFrame = buildFrame({ id: alert.id, type: 'ENDM', location: '', expires: null, message: '' });
   const eom = repeatBursts(modulateBytes(eomFrame, sampleRate), sampleRate, bursts, gapSec);
   return { header, eom };
@@ -238,7 +260,9 @@ export class Demodulator {
     const { baud, markHz, spaceHz } = PROTOCOL;
     this.spb = sampleRate / baud;
     this.N = Math.round(this.spb);
+    // 4th-order high-pass keeps the receiver's own 350 Hz preamble tone out of the FSK detector
     this.hp = new Biquad('hp', 900, 0.707, sampleRate);
+    this.hp2 = new Biquad('hp', 900, 0.707, sampleRate);
     this.lp = new Biquad('lp', 3200, 0.707, sampleRate);
     this.wm = (2 * Math.PI * markHz) / sampleRate;
     this.ws = (2 * Math.PI * spaceHz) / sampleRate;
@@ -262,7 +286,7 @@ export class Demodulator {
   process(samples) {
     const { rb, sum, N } = this;
     for (let k = 0; k < samples.length; k++) {
-      const x = this.lp.run(this.hp.run(samples[k]));
+      const x = this.lp.run(this.hp2.run(this.hp.run(samples[k])));
       this.pm += this.wm; if (this.pm > 6.283185307179586) this.pm -= 6.283185307179586;
       this.ps += this.ws; if (this.ps > 6.283185307179586) this.ps -= 6.283185307179586;
       const i = this.idx;

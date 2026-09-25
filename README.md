@@ -22,12 +22,16 @@ burst, shows a banner and reads the alert aloud.
 |---|---|---|
 | Modulation | AFSK 600 baud, async 8N1 | AFSK 520.83 baud |
 | Mark / space | 1300 Hz / 2500 Hz | 2083.3 Hz / 1562.5 Hz |
-| Preamble | 300 ms continuous mark | 16 × `0xAB` |
+| Preamble | `PREA` data burst (alert ID + type) | 16 × `0xAB` |
 | Header | `PMWS1\|id\|TYPE\|location\|YYYYMMDDTHHMMZ\|message\|CRC16` + EOT | `ZCZC-…` |
 | Attention | 700 + 500 Hz dual square-wave tone | 853 + 960 Hz dual tone |
 | End | frame with type `ENDM` | `NNNN` |
 
-Each header is sent 3×; receivers de-duplicate by ID and verify a CRC-16.
+Transmission order: **PREA preamble burst → 3 header bursts → dual-tone attention signal → TTS → 3 ENDM bursts**.
+
+When a receiver decodes the `PREA` burst it immediately shows an "Incoming" alert screen and plays a
+350 Hz tone locally while the 3 header bursts arrive, then shows the full alert and reads it aloud.
+Each burst carries a CRC-16; receivers de-duplicate by ID.
 
 ## Use
 1. Open the site on two devices (or one — it'll hear itself).

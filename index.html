@@ -120,7 +120,7 @@
         <tr><th></th><th>PMWS (this)</th><th>EAS / SAME</th></tr>
         <tr><td>Modulation</td><td>AFSK, 600 baud, async 8N1</td><td>AFSK, 520.83 baud</td></tr>
         <tr><td>Mark / Space</td><td>1300 Hz / 2500 Hz</td><td>2083.3 Hz / 1562.5 Hz</td></tr>
-        <tr><td>Preamble</td><td>300 ms continuous mark</td><td>16 × 0xAB</td></tr>
+        <tr><td>Preamble</td><td><code>PREA</code> data burst (alert ID + type); receivers show “Incoming” and play a 350 Hz tone while the 3 header bursts arrive</td><td>16 × 0xAB</td></tr>
         <tr><td>Header</td><td><code>PMWS1|id|TYPE|location|YYYYMMDDTHHMMZ|message|CRC16␄</code></td><td><code>ZCZC-ORG-EEE-PSSCCC…</code></td></tr>
         <tr><td>Attention</td><td>700 + 500 Hz dual square-wave tone</td><td>853 + 960 Hz dual tone</td></tr>
         <tr><td>End</td><td>Frame with type <code>ENDM</code></td><td><code>NNNN</code></td></tr>

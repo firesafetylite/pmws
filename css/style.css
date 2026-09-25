@@ -70,6 +70,7 @@ details { margin-top: 10px; font-size: .85rem; color: var(--muted); }
 .b-type { font-size: 1.4rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 .banner-meta { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 6px; font-size: .9rem; color: #d7dcea; }
 .b-msg { font-size: 1.1rem; margin: 10px 0 0; }
+.banner.incoming { border-style: dashed; animation: pulse .5s ease-in-out infinite alternate; }
 .hidden { display: none; }
 
 .log-head { display: flex; justify-content: space-between; align-items: center; }

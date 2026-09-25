@@ -1,5 +1,5 @@
 import {
-  PROTOCOL, ALERT_TYPES, buildTransmission, Demodulator, newAlertId, encodeWav, concat, attentionTone,
+  PROTOCOL, ALERT_TYPES, buildTransmission, Demodulator, newAlertId, encodeWav, concat,
 } from './modem.js';
 
 const $ = (id) => document.getElementById(id);
@@ -265,21 +265,10 @@ async function drainSpeech() {
   speaking = true;
   while (speakQueue.length) {
     const a = speakQueue.shift();
-    if ($('rxChime').checked) await playLocal(attentionTone(audio().sampleRate, 2, 0.4));
     await speak(spokenText(a), { volume: 1 });
     await sleep(500);
   }
   speaking = false;
-}
-
-function playLocal(samples) {
-  const ac = audio();
-  return new Promise((resolve) => {
-    const buf = ac.createBuffer(1, samples.length, ac.sampleRate);
-    buf.copyToChannel(samples, 0);
-    const s = ac.createBufferSource();
-    s.buffer = buf; s.connect(ac.destination); s.onended = resolve; s.start();
-  });
 }
 
 function onAlert(a) {

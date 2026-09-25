@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PMWS · Public Mass Warning System</title>
+  <meta name="description" content="A hobby audio alert system using AFSK data bursts, attention chime and text-to-speech. Not compatible with EAS/SAME." />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">◈</span>
+      <div>
+        <h1>PMWS</h1>
+        <p>Public Mass Warning System</p>
+      </div>
+    </div>
+    <div class="notice" role="note">
+      Hobby project. <strong>Not</strong> EAS/SAME. Uses a different protocol so it cannot trigger real alert receivers.
+    </div>
+  </header>
+
+  <div id="alertBanner" class="banner hidden" role="alert" aria-live="assertive">
+    <div class="banner-head">
+      <span id="bType" class="b-type"></span>
+      <button id="bDismiss" class="btn ghost small" type="button">Dismiss</button>
+    </div>
+    <div class="banner-meta">
+      <span>📍 <b id="bLoc"></b></span>
+      <span>⏱ Until <b id="bExp"></b></span>
+      <span>ID <b id="bId"></b></span>
+    </div>
+    <p id="bMsg" class="b-msg"></p>
+  </div>
+
+  <main class="grid">
+    <!-- ============================== TRANSMIT -->
+    <section class="card" aria-labelledby="txTitle">
+      <h2 id="txTitle">📡 Transmit</h2>
+      <form id="txForm" autocomplete="off">
+        <label>Alert type
+          <select id="txType"></select>
+        </label>
+        <label>Location
+          <input id="txLoc" maxlength="80" required placeholder="e.g. North Ridge District" />
+        </label>
+        <label>Effective until
+          <input id="txExp" type="datetime-local" required />
+        </label>
+        <label>Message (spoken by TTS) <small id="txCount">0/280</small>
+          <textarea id="txMsg" rows="4" maxlength="280" required placeholder="What people should know and do."></textarea>
+        </label>
+        <div class="row">
+          <label>Voice
+            <select id="txVoice"></select>
+          </label>
+          <label class="narrow">Rate
+            <input id="txRate" type="number" min="0.5" max="1.5" step="0.1" value="0.9" />
+          </label>
+        </div>
+        <div class="row checks">
+          <label class="check"><input id="txAttn" type="checkbox" checked /> Attention chime</label>
+          <label class="check"><input id="txTts" type="checkbox" checked /> Speak message</label>
+          <label class="check"><input id="txEom" type="checkbox" checked /> End-of-message bursts</label>
+        </div>
+        <label>Output volume
+          <input id="txVol" type="range" min="0" max="1" step="0.05" value="0.8" />
+        </label>
+        <div class="row buttons">
+          <button id="txSend" class="btn primary" type="submit">Broadcast</button>
+          <button id="txStop" class="btn" type="button" disabled>Stop</button>
+          <button id="txWav" class="btn ghost" type="button">Download .wav</button>
+        </div>
+        <p id="txStatus" class="status">Idle.</p>
+      </form>
+    </section>
+
+    <!-- ============================== RECEIVE -->
+    <section class="card" aria-labelledby="rxTitle">
+      <h2 id="rxTitle">🎧 Receive</h2>
+      <div class="row">
+        <label>Microphone
+          <select id="rxDev"><option value="">Default microphone</option></select>
+        </label>
+      </div>
+      <div class="row checks">
+        <label class="check"><input id="rxSpeak" type="checkbox" checked /> Read alerts aloud</label>
+        <label class="check"><input id="rxChime" type="checkbox" checked /> Play chime on alert</label>
+        <label class="check"><input id="rxTests" type="checkbox" checked /> Show TEST/DRIL</label>
+      </div>
+      <div class="row buttons">
+        <button id="rxStart" class="btn primary" type="button">Start listening</button>
+        <button id="rxStop" class="btn" type="button" disabled>Stop</button>
+      </div>
+
+      <div class="meters">
+        <div class="meter"><span>Level</span><div class="bar"><i id="mLevel"></i></div></div>
+        <div class="meter"><span>Tone lock</span><div class="bar"><i id="mQual"></i></div></div>
+        <div class="led-row"><span id="led" class="led"></span><span id="rxStatus" class="status">Not listening.</span></div>
+      </div>
+      <canvas id="scope" width="600" height="110" aria-label="Spectrum display"></canvas>
+      <details>
+        <summary>Raw decoder output</summary>
+        <pre id="rxRaw" class="raw"></pre>
+      </details>
+    </section>
+
+    <!-- ============================== LOG -->
+    <section class="card wide" aria-labelledby="logTitle">
+      <div class="log-head">
+        <h2 id="logTitle">🗂 Received alerts</h2>
+        <button id="logClear" class="btn ghost small" type="button">Clear</button>
+      </div>
+      <ul id="log" class="log"><li class="empty">Nothing received yet.</li></ul>
+    </section>
+
+    <section class="card wide spec">
+      <h2>Protocol</h2>
+      <table>
+        <tr><th></th><th>PMWS (this)</th><th>EAS / SAME</th></tr>
+        <tr><td>Modulation</td><td>AFSK, 600 baud, async 8N1</td><td>AFSK, 520.83 baud</td></tr>
+        <tr><td>Mark / Space</td><td>1300 Hz / 2500 Hz</td><td>2083.3 Hz / 1562.5 Hz</td></tr>
+        <tr><td>Preamble</td><td>300 ms continuous mark</td><td>16 × 0xAB</td></tr>
+        <tr><td>Header</td><td><code>PMWS1|id|TYPE|location|YYYYMMDDTHHMMZ|message|CRC16␄</code></td><td><code>ZCZC-ORG-EEE-PSSCCC…</code></td></tr>
+        <tr><td>Attention</td><td>698 / 1047 Hz alternating chime</td><td>853 + 960 Hz dual tone</td></tr>
+        <tr><td>End</td><td>Frame with type <code>ENDM</code></td><td><code>NNNN</code></td></tr>
+      </table>
+      <p class="muted">The message text travels inside the data burst, so receivers can read it aloud even if they missed the audio.</p>
+    </section>
+  </main>
+
+  <footer>PMWS — for experiments, drills and fun. Do not use for real emergencies.</footer>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

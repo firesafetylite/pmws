@@ -5,7 +5,7 @@
 //          "ZCZC-" header, "NNNN" EOM, 853+960 Hz attention tone.
 //   PMWS : 600 baud async UART (8N1), mark 1300 Hz / space 2500 Hz,
 //          continuous-mark lead-in, "PMWS1|" header, CRC-16 checksum,
-//          EOT-terminated frames, 698/1047 Hz alternating "chime" attention tone.
+//          EOT-terminated frames, 700 + 500 Hz dual square-wave attention tone.
 // A SAME decoder will never see its preamble, its tones or "ZCZC", so it cannot trigger.
 
 export const PROTOCOL = Object.freeze({
@@ -17,7 +17,7 @@ export const PROTOCOL = Object.freeze({
   leadInSec: 0.3,
   tailSec: 0.06,
   EOT: 0x04,
-  attnFreqs: [698.46, 1046.5],
+  attnFreqs: [700, 500], // dual square-wave attention tone
   maxMessage: 280,
 });
 
@@ -149,19 +149,27 @@ export function modulateBytes(bytes, sampleRate, amplitude = 0.7) {
   return fade(out, sampleRate);
 }
 
+/** One cycle of a band-limited square wave (odd harmonics up to maxHz), to avoid aliasing. */
+function squareSample(phase, f, maxHz) {
+  let s = 0;
+  for (let k = 1; k * f < maxHz; k += 2) s += Math.sin(k * phase) / k;
+  return (4 / Math.PI) * s;
+}
+
+/** Dual-tone attention signal: 700 Hz + 500 Hz square waves played simultaneously. */
 export function attentionTone(sampleRate, seconds = 6, amplitude = 0.5) {
   const out = new Float32Array(Math.round(sampleRate * seconds));
-  const [a, b] = PROTOCOL.attnFreqs;
-  const seg = 0.25; // seconds per note
-  let phase = 0;
+  const maxHz = Math.min(sampleRate / 2 - 500, 12000);
+  const tones = PROTOCOL.attnFreqs;
+  let peak = 0;
   for (let i = 0; i < out.length; i++) {
-    const t = i / sampleRate;
-    const f = Math.floor(t / seg) % 2 ? b : a;
-    phase += (2 * Math.PI * f) / sampleRate;
-    const local = (t % seg) / seg;
-    const env = Math.min(1, local * 40, (1 - local) * 40); // soft note edges
-    out[i] = amplitude * env * (0.8 * Math.sin(phase) + 0.2 * Math.sin(2 * phase));
+    let v = 0;
+    for (const f of tones) v += squareSample((2 * Math.PI * f * i) / sampleRate, f, maxHz);
+    out[i] = v;
+    peak = Math.max(peak, Math.abs(v));
   }
+  const g = amplitude / (peak || 1);
+  for (let i = 0; i < out.length; i++) out[i] *= g;
   return fade(out, sampleRate, 20);
 }
 

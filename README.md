@@ -1,7 +1,7 @@
 # PMWS — Public Mass Warning System
 
 A hobby, browser-based audio alert system inspired by EAS. A transmitter plays an
-AFSK data burst through your **speakers**, followed by an attention chime and a
+AFSK data burst through your **speakers**, followed by an attention tone and a
 text-to-speech message. A receiver listens on the **microphone**, decodes the
 burst, shows a banner and reads the alert aloud.
 
@@ -24,7 +24,7 @@ burst, shows a banner and reads the alert aloud.
 | Mark / space | 1300 Hz / 2500 Hz | 2083.3 Hz / 1562.5 Hz |
 | Preamble | 300 ms continuous mark | 16 × `0xAB` |
 | Header | `PMWS1\|id\|TYPE\|location\|YYYYMMDDTHHMMZ\|message\|CRC16` + EOT | `ZCZC-…` |
-| Attention | 698 / 1047 Hz alternating chime | 853 + 960 Hz dual tone |
+| Attention | 700 + 500 Hz dual square-wave tone | 853 + 960 Hz dual tone |
 | End | frame with type `ENDM` | `NNNN` |
 
 Each header is sent 3×; receivers de-duplicate by ID and verify a CRC-16.

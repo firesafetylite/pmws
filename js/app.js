@@ -139,7 +139,7 @@ $('txWav').addEventListener('click', () => {
   const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
   Object.assign(document.createElement('a'), { href: url, download: `pmws-${a.type}-${a.id}.wav` }).click();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
-  $('txStatus').textContent = 'WAV saved (data + chime + EOM; the TTS voice is added live by receivers).';
+  $('txStatus').textContent = 'WAV saved (data + attention tone + EOM; the TTS voice is added live by receivers).';
 });
 
 // ================================================================ RECEIVE

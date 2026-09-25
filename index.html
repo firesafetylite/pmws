@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PMWS · Public Mass Warning System</title>
-  <meta name="description" content="A hobby audio alert system using AFSK data bursts, attention chime and text-to-speech. Not compatible with EAS/SAME." />
+  <meta name="description" content="A hobby audio alert system using AFSK data bursts, attention tone and text-to-speech. Not compatible with EAS/SAME." />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
@@ -60,7 +60,7 @@
           </label>
         </div>
         <div class="row checks">
-          <label class="check"><input id="txAttn" type="checkbox" checked /> Attention chime</label>
+          <label class="check"><input id="txAttn" type="checkbox" checked /> Attention tone</label>
           <label class="check"><input id="txTts" type="checkbox" checked /> Speak message</label>
           <label class="check"><input id="txEom" type="checkbox" checked /> End-of-message bursts</label>
         </div>
@@ -86,7 +86,7 @@
       </div>
       <div class="row checks">
         <label class="check"><input id="rxSpeak" type="checkbox" checked /> Read alerts aloud</label>
-        <label class="check"><input id="rxChime" type="checkbox" checked /> Play chime on alert</label>
+        <label class="check"><input id="rxChime" type="checkbox" checked /> Play attention tone on alert</label>
         <label class="check"><input id="rxTests" type="checkbox" checked /> Show TEST/DRIL</label>
       </div>
       <div class="row buttons">
@@ -123,7 +123,7 @@
         <tr><td>Mark / Space</td><td>1300 Hz / 2500 Hz</td><td>2083.3 Hz / 1562.5 Hz</td></tr>
         <tr><td>Preamble</td><td>300 ms continuous mark</td><td>16 × 0xAB</td></tr>
         <tr><td>Header</td><td><code>PMWS1|id|TYPE|location|YYYYMMDDTHHMMZ|message|CRC16␄</code></td><td><code>ZCZC-ORG-EEE-PSSCCC…</code></td></tr>
-        <tr><td>Attention</td><td>698 / 1047 Hz alternating chime</td><td>853 + 960 Hz dual tone</td></tr>
+        <tr><td>Attention</td><td>700 + 500 Hz dual square-wave tone</td><td>853 + 960 Hz dual tone</td></tr>
         <tr><td>End</td><td>Frame with type <code>ENDM</code></td><td><code>NNNN</code></td></tr>
       </table>
       <p class="muted">The message text travels inside the data burst, so receivers can read it aloud even if they missed the audio.</p>

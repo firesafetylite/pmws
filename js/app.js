@@ -49,7 +49,7 @@ function spokenText(a) {
 // ================================================================ TRANSMIT
 const typeSel = $('txType');
 typeSel.innerHTML = Object.entries(ALERT_TYPES)
-  .filter(([k]) => k !== 'ENDM' && k !== 'PREA')
+  .filter(([k]) => k !== 'ENDM')
   .map(([k, v]) => `<option value="${k}">${v.name} (${k})</option>`).join('');
 
 (function defaultExpiry() {
@@ -65,7 +65,7 @@ function validate() {
   const fields = [
     ['txLoc', (v) => v.trim(), 'Enter a location.'],
     ['txExp', (v) => v && !isNaN(new Date(v)), 'Choose when the alert expires.'],
-    ['txMsg', (v) => v.trim(), 'Enter a message.'],
+    ['txMsg', (v) => v.trim() || typeSel.value === 'TEST', 'Enter a message.'],
   ];
   let firstBad = null;
   for (const [id, ok, msg] of fields) {
@@ -78,6 +78,15 @@ function validate() {
   return true;
 }
 for (const id of ['txLoc', 'txExp', 'txMsg']) $(id).addEventListener('input', (e) => e.target.removeAttribute('aria-invalid'));
+function syncTestMode() {
+  const test = typeSel.value === 'TEST';
+  $('txTts').disabled = test;
+  $('txMsgHint').textContent = test
+    ? 'Test / Drill: only the alert tones are played — the message is shown on screen but not spoken. Optional.'
+    : 'Read aloud by text-to-speech on the transmitter and every receiver.';
+}
+typeSel.addEventListener('change', syncTestMode);
+syncTestMode();
 $('txVol').addEventListener('input', (e) => { $('txVolOut').textContent = `${Math.round(e.target.value * 100)}%`; });
 
 function readForm() {
@@ -127,7 +136,7 @@ $('txForm').addEventListener('submit', async (e) => {
     setTx(true, `Sending data bursts (ID ${a.id})…`);
     await playBuffer(header);
     if (txAbort) return;
-    if ($('txTts').checked) {
+    if ($('txTts').checked && a.type !== 'TEST') {
       setTx(true, 'Speaking message…');
       await sleep(400);
       await speak(spokenText(a), { volume: +$('txVol').value });
@@ -275,7 +284,7 @@ function drawScope() {
 }
 
 // ================================================================ ALERT HANDLING
-let alerts = JSON.parse(localStorage.getItem('pmws-log') || '[]').map((a) => ({ ...a, expires: a.expires ? new Date(a.expires) : null, at: new Date(a.at) }));
+let alerts = JSON.parse(localStorage.getItem('pmws-log') || '[]').map((a) => ({ ...a, type: a.type === 'DRIL' ? 'TEST' : a.type, expires: a.expires ? new Date(a.expires) : null, at: new Date(a.at) }));
 let current = null;
 const speakQueue = [];
 let speaking = false;
@@ -291,8 +300,12 @@ async function drainSpeech() {
   speaking = false;
 }
 
-// ---------------------------------------------------------------- preamble handling
-let pending = null; // {id, type, tone:{src,gain}, copies, timer}
+// ---------------------------------------------------------------- progressive headers
+// Header 1/3 (ID + type) activates the receiver: alert screen + 350 Hz tone.
+// Header 2/3 adds location + effective-until, header 3/3 adds the message.
+let pending = null; // {alert, got:Set, tone, timer}
+const HEADER_TIMEOUT_MS = 8000; // longest header burst (~5 s) + gap + margin
+const isTest = (t) => t === 'TEST';
 
 function startPreambleTone() {
   const ac = audio();
@@ -329,61 +342,48 @@ function endPending() {
   pending = null;
 }
 
-function armTimer(sec) {
-  clearTimeout(pending.timer);
-  const id = pending.id;
-  pending.timer = setTimeout(() => {
-    if (pending?.id !== id) return;
-    const gotHeader = pending.copies > 0;
-    endPending();
-    if (!gotHeader) {
-      $('rxStatus').textContent = `Preamble ${id} heard but no alert data followed.`;
-      if (current?.id === id) closeBanner(false);
-    }
-  }, sec * 1000);
-}
-
-function onPreamble(a) {
-  const type = a.message;
-  if (!$('rxTests').checked && (type === 'TEST' || type === 'DRIL')) return;
-  endPending();
-  pending = { id: a.id, type, copies: 0, tone: ownIds.has(a.id) ? null : startPreambleTone() };
-  armTimer(PROTOCOL.preambleTimeoutSec);
-  current = { id: a.id };
-  openBanner(`banner ${severity(type)} incoming`);
-  $('bType').textContent = `Incoming: ${typeName(type)}`;
-  $('bLoc').textContent = 'receiving…';
-  $('bExp').textContent = 'receiving…';
+function renderIncoming() {
+  const { alert: a, got } = pending;
+  const n = PROTOCOL.headers;
+  openBanner(`banner ${severity(a.type)} incoming`);
+  $('bType').textContent = typeName(a.type);
+  $('bLoc').textContent = got.has(2) || got.has(3) ? a.location || '—' : 'receiving…';
+  $('bExp').textContent = got.has(2) || got.has(3) ? fmtTime(a.expires) : 'receiving…';
   $('bId').textContent = a.id;
-  $('bMsg').textContent = 'Stand by — alert data is being received.';
-  $('rxStatus').textContent = `Preamble received (ID ${a.id}) — waiting for alert data…`;
+  $('bMsg').textContent = got.has(3) ? a.message : 'Stand by — alert information is being received.';
+  $('rxStatus').textContent = `Receiving alert ${a.id}… header ${got.size}/${n}`;
 }
 
-/** Called for every decoded header copy (including repeats). */
-function trackHeaderCopy(a) {
-  if (pending?.id !== a.id) return;
-  pending.copies++;
-  $('rxStatus').textContent = `Receiving alert data… (${pending.copies}/3)`;
-  if (pending.copies >= 3) endPending();
-  else armTimer(5); // a missed/garbled copy shouldn't leave the tone playing forever
-}
-
-function onAlert(a) {
-  if (a.type !== 'PREA' && a.type !== 'ENDM') trackHeaderCopy(a);
-  const key = `${a.id}:${a.type}`;
-  const now = Date.now();
-  for (const [k, t] of seen) if (now - t > 120000) seen.delete(k);
-  if (seen.has(key)) return; // repeated burst
-  seen.set(key, now);
-
-  if (a.type === 'PREA') return onPreamble(a);
-
-  if (a.type === 'ENDM') {
-    if (pending?.id === a.id) endPending();
-    $('rxStatus').textContent = `End of message (ID ${a.id}).`;
-    return;
+function onHeader(f) {
+  if (!$('rxTests').checked && isTest(f.type)) return;
+  if (!pending || pending.alert.id !== f.id) {
+    if (seen.has(`${f.id}:done`)) return; // already completed, ignore late repeats
+    endPending();
+    pending = {
+      alert: { id: f.id, type: f.type, location: '', expires: null, message: '' },
+      got: new Set(),
+      tone: ownIds.has(f.id) ? null : startPreambleTone(),
+    };
+    current = { id: f.id };
   }
-  if (!$('rxTests').checked && (a.type === 'TEST' || a.type === 'DRIL')) return;
+  if (pending.got.has(f.seq)) return;
+  pending.got.add(f.seq);
+  const a = pending.alert;
+  if (f.location) a.location = f.location;
+  if (f.expires) a.expires = f.expires;
+  if (f.message) a.message = f.message;
+  renderIncoming();
+  clearTimeout(pending.timer);
+  if (f.seq >= (f.of || PROTOCOL.headers)) completeAlert();
+  else pending.timer = setTimeout(completeAlert, HEADER_TIMEOUT_MS); // later header lost -> use what we have
+}
+
+function completeAlert() {
+  if (!pending) return;
+  const { alert: a, got } = pending;
+  endPending();
+  seen.set(`${a.id}:done`, Date.now());
+  if (!got.has(3) && !a.message) a.message = '(Message not received.)';
 
   const own = ownIds.has(a.id);
   const expired = a.expires && a.expires < new Date();
@@ -393,19 +393,32 @@ function onAlert(a) {
   saveLog();
   renderLog();
   showBanner(entry);
-  $('rxStatus').textContent = pending?.id === a.id
-    ? `Receiving alert data… (${pending.copies}/3)`
-    : `Alert received: ${typeName(a.type)} (ID ${a.id})`;
+  $('rxStatus').textContent = `Alert received: ${typeName(a.type)} (ID ${a.id}, ${got.size}/${PROTOCOL.headers} headers)`;
 
-  // Don't read our own broadcast twice or alerts that already expired.
-  // Wait for the preamble tone / data bursts to finish before speaking.
-  if ($('rxSpeak').checked && !own && !expired) {
+  // TEST: tones only, no speech. Don't re-read our own broadcast or expired alerts.
+  if ($('rxSpeak').checked && !own && !expired && !isTest(a.type) && got.has(3)) {
     speakQueue.push(a);
-    waitForPendingThen(drainSpeech);
+    drainSpeech();
   }
   if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
     new Notification(`PMWS: ${typeName(a.type)}`, { body: `${a.location}\n${a.message}` });
   }
+}
+
+function onAlert(f) {
+  const now = Date.now();
+  for (const [k, t] of seen) if (now - t > 120000) seen.delete(k);
+
+  if (f.type === 'ENDM') {
+    if (seen.has(`${f.id}:ENDM`)) return;
+    seen.set(`${f.id}:ENDM`, now);
+    if (pending?.alert.id === f.id) completeAlert();
+    $('rxStatus').textContent = `End of message (ID ${f.id}).`;
+    return;
+  }
+  // Frames without a sequence number are treated as a complete single header.
+  if (!f.seq) Object.assign(f, { seq: PROTOCOL.headers, of: PROTOCOL.headers });
+  onHeader(f);
 }
 
 let lastFocus = null;
@@ -433,9 +446,6 @@ function showBanner(a) {
   $('bExp').textContent = fmtTime(a.expires);
   $('bId').textContent = a.id;
   $('bMsg').textContent = a.message;
-}
-function waitForPendingThen(fn) {
-  const id = setInterval(() => { if (!pending) { clearInterval(id); fn(); } }, 200);
 }
 
 function dismiss() { endPending(); closeBanner(); speechSynthesis?.cancel(); speakQueue.length = 0; }

@@ -14,9 +14,13 @@ function run(sr, noise, gain = 1, label = '') {
   const frames = [];
   const d = new Demodulator(sr, { onFrame: (f) => frames.push(f) });
   for (let i = 0; i < sig.length; i += 128) d.process(sig.subarray(i, i + 128));
-  const ok = frames.filter((f) => f.type === 'TORW' && f.message === alert.message && f.location === alert.location && +f.expires === +alert.expires).length;
+  const h = frames.filter((f) => f.type === 'TORW');
+  const ok = h.filter((f) =>
+    (f.seq === 1 && !f.location && !f.message) ||
+    (f.seq === 2 && f.location === alert.location && +f.expires === +alert.expires && !f.message) ||
+    (f.seq === 3 && f.location === alert.location && +f.expires === +alert.expires && f.message === alert.message)).length;
   const eoms = frames.filter((f) => f.type === 'ENDM').length;
-  const pass = ok >= 1 && eoms >= 1;
+  const pass = ok === 3 && eoms >= 1;
   if (!pass) fails++;
   console.log(`${pass ? 'PASS' : 'FAIL'} sr=${sr} noise=${noise} gain=${gain} ${label} headers=${ok}/3 eoms=${eoms}/3`);
 }

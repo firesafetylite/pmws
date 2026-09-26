@@ -1,13 +1,13 @@
 // PMWS modem — Public Mass Warning System
 //
-// Deliberately NOT compatible with EAS / SAME (47 CFR 11.31):
-//   SAME : 520.83 baud, mark 2083.3 Hz / space 1562.5 Hz, sync 0xAB preamble,
-//          "ZCZC-" header, "NNNN" EOM, 853+960 Hz attention tone.
-//   PMWS : 600 baud async UART (8N1), mark 1300 Hz / space 2500 Hz,
-//          continuous-mark lead-in, "PMWS1|" header, CRC-16 checksum,
-//          EOT-terminated frames, 700 + 500 Hz dual square-wave attention tone,
-//          preceded by a PREA preamble data burst.
-// A SAME decoder will never see its preamble, its tones or "ZCZC", so it cannot trigger.
+//   600 baud async UART (8N1) AFSK, mark 1300 Hz / space 2500 Hz, continuous-mark lead-in,
+//   "PMWS1|" frames with CRC-16, EOT-terminated, 700 + 500 Hz dual square-wave attention tone.
+//
+// A transmission sends 3 progressive header bursts:
+//   1/3  ID + type                         -> activates receivers (alert screen + 350 Hz tone)
+//   2/3  + location + effective-until
+//   3/3  + message (complete alert)
+// followed by the attention tone, TTS (not for TEST) and 3 ENDM bursts.
 
 export const PROTOCOL = Object.freeze({
   name: 'PMWS',
@@ -19,8 +19,8 @@ export const PROTOCOL = Object.freeze({
   tailSec: 0.06,
   EOT: 0x04,
   attnFreqs: [700, 500], // dual square-wave attention tone
-  preambleHz: 350, // tone the RECEIVER plays locally after decoding a PREA burst
-  preambleTimeoutSec: 12, // give up waiting for the header after this long
+  headers: 3,
+  preambleHz: 350, // tone the RECEIVER plays while the header bursts arrive
   maxMessage: 280,
 });
 
@@ -37,10 +37,8 @@ export const ALERT_TYPES = Object.freeze({
   PWRO: { name: 'Power Outage Notice', severity: 'moderate' },
   WTHR: { name: 'Weather Advisory', severity: 'moderate' },
   INFO: { name: 'Information Bulletin', severity: 'minor' },
-  DRIL: { name: 'Drill', severity: 'minor' },
-  TEST: { name: 'Test Message', severity: 'minor' },
+  TEST: { name: 'Test / Drill', severity: 'minor' },
   ENDM: { name: 'End Of Message', severity: 'minor' },
-  PREA: { name: 'Incoming Alert', severity: 'minor' },
 });
 
 // ---------------------------------------------------------------- framing
@@ -74,13 +72,14 @@ export function newAlertId() {
   return Math.floor(Math.random() * 0x10000).toString(16).toUpperCase().padStart(4, '0');
 }
 
-/** alert: {id, type, location, expires(Date), message} -> Uint8Array */
+/** alert: {id, type, seq, location, expires(Date), message} -> Uint8Array */
 export function buildFrame(alert) {
   const body =
     [
       PROTOCOL.magic,
       clean(alert.id).slice(0, 8),
       clean(alert.type).toUpperCase().slice(0, 4),
+      clean(alert.seq ?? ''),
       clean(alert.location).slice(0, 80),
       alert.expires ? formatExpiry(alert.expires) : '',
       clean(alert.message).slice(0, PROTOCOL.maxMessage),
@@ -103,13 +102,16 @@ export function parseFrame(bytes) {
   if (!/^[0-9A-F]{4}$/.test(crc)) return null;
   if (crc16(enc.encode(body)) !== parseInt(crc, 16)) return null;
   const f = body.split('|');
-  if (f.length < 7) return null;
+  if (f.length < 8) return null;
+  const sm = /^(\d)\/(\d)$/.exec(f[3]);
   return {
     id: f[1],
     type: f[2],
-    location: f[3],
-    expires: parseExpiry(f[4]),
-    message: f[5],
+    seq: sm ? +sm[1] : 0,
+    of: sm ? +sm[2] : 0,
+    location: f[4],
+    expires: parseExpiry(f[5]),
+    message: f[6],
     raw: body + crc,
   };
 }
@@ -198,32 +200,34 @@ export function repeatBursts(burst, sampleRate, count = 3, gapSec = 1) {
   return concat(parts);
 }
 
-/** Pure sine tone played by receivers while an alert's data bursts arrive. */
-export function preambleTone(sampleRate, seconds = 1, amplitude = 0.3) {
-  const out = new Float32Array(Math.round(sampleRate * seconds));
-  const w = (2 * Math.PI * PROTOCOL.preambleHz) / sampleRate;
-  for (let i = 0; i < out.length; i++) out[i] = amplitude * Math.sin(w * i);
-  return fade(out, sampleRate, 15);
+/**
+ * Progressive header frames: 1 = ID + type, 2 = + location/expiry, 3 = + message.
+ */
+export function buildHeaderFrames(alert) {
+  const n = PROTOCOL.headers;
+  const base = { id: alert.id, type: alert.type };
+  return [
+    { ...base, seq: `1/${n}`, location: '', expires: null, message: '' },
+    { ...base, seq: `2/${n}`, location: alert.location, expires: alert.expires, message: '' },
+    { ...base, seq: `3/${n}`, location: alert.location, expires: alert.expires, message: alert.message },
+  ].map(buildFrame);
 }
 
 /**
  * Returns {header, eom} audio (Float32Array).
- * header = [PREA preamble burst] + 3 data bursts + [attention tone]
- * The preamble frame carries the alert ID and, in its message field, the alert type code.
+ * header = 3 progressive header bursts + [attention tone]
  */
-export function buildPreambleFrame(alert) {
-  return buildFrame({ id: alert.id, type: 'PREA', location: '', expires: null, message: alert.type });
-}
-
-export function buildTransmission(alert, sampleRate, { bursts = 3, gapSec = 1, attnSec = 6, preamble = true } = {}) {
+export function buildTransmission(alert, sampleRate, { gapSec = 1, attnSec = 6 } = {}) {
   const silence = (s) => new Float32Array(Math.round(sampleRate * s));
   const parts = [];
-  if (preamble) parts.push(modulateBytes(buildPreambleFrame(alert), sampleRate), silence(gapSec));
-  parts.push(repeatBursts(modulateBytes(buildFrame(alert), sampleRate), sampleRate, bursts, gapSec));
+  buildHeaderFrames(alert).forEach((f, i) => {
+    if (i) parts.push(silence(gapSec));
+    parts.push(modulateBytes(f, sampleRate));
+  });
   if (attnSec > 0) parts.push(silence(0.8), attentionTone(sampleRate, attnSec));
   const header = concat(parts);
-  const eomFrame = buildFrame({ id: alert.id, type: 'ENDM', location: '', expires: null, message: '' });
-  const eom = repeatBursts(modulateBytes(eomFrame, sampleRate), sampleRate, bursts, gapSec);
+  const eomFrame = buildFrame({ id: alert.id, type: 'ENDM', seq: '', location: '', expires: null, message: '' });
+  const eom = repeatBursts(modulateBytes(eomFrame, sampleRate), sampleRate, PROTOCOL.headers, gapSec);
   return { header, eom };
 }
 

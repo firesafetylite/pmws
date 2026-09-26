@@ -1,7 +1,7 @@
 // PMWS modem — Public Mass Warning System
 //
 //   1200 baud async UART (8N1) AFSK, mark 1300 Hz / space 2500 Hz, continuous-mark lead-in,
-//   "PMWS1|" frames with CRC-16, EOT-terminated, 700 + 500 Hz dual square-wave attention tone.
+//   "PMWS2|" frames (location + message shorthand-compressed, see codebook.js) with CRC-16, EOT-terminated, 700 + 500 Hz dual square-wave attention tone.
 //
 // A transmission sends the same header burst 3 times for redundancy. The first copy a receiver
 // decodes activates it (alert screen + 350 Hz tone); the remaining copies are confirmations.
@@ -9,7 +9,7 @@
 
 export const PROTOCOL = Object.freeze({
   name: 'PMWS',
-  magic: 'PMWS1',
+  magic: 'PMWS2', // v2: 1200 baud + codebook compression
   baud: 1200,
   markHz: 1300, // logical 1 / idle
   spaceHz: 2500, // logical 0
@@ -53,6 +53,8 @@ export function crc16(bytes) {
   }
   return crc;
 }
+
+import { compress, expand } from './codebook.js';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder('utf-8', { fatal: false });
@@ -100,9 +102,9 @@ export function buildFrame(alert) {
       PROTOCOL.magic,
       clean(alert.id).slice(0, 8),
       clean(alert.type).toUpperCase().slice(0, 4),
-      truncateBytes(clean(alert.location), PROTOCOL.maxLocation),
+      compress(truncateBytes(clean(alert.location), PROTOCOL.maxLocation)),
       alert.expires ? formatExpiry(alert.expires) : '',
-      truncateBytes(clean(alert.message), PROTOCOL.maxMessage),
+      compress(truncateBytes(clean(alert.message), PROTOCOL.maxMessage)),
     ].join('|') + '|';
   const b = enc.encode(body);
   const crc = crc16(b).toString(16).toUpperCase().padStart(4, '0');
@@ -126,9 +128,9 @@ export function parseFrame(bytes) {
   return {
     id: f[1],
     type: f[2],
-    location: f[3],
+    location: expand(f[3]),
     expires: parseExpiry(f[4]),
-    message: f[5],
+    message: expand(f[5]),
     raw: body + crc,
   };
 }

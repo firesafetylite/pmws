@@ -1,6 +1,6 @@
 // PMWS modem — Public Mass Warning System
 //
-//   700 baud async UART (8N1) AFSK, mark 1300 Hz / space 2500 Hz, continuous-mark lead-in,
+//   1200 baud async UART (8N1) AFSK, mark 1300 Hz / space 2500 Hz, continuous-mark lead-in,
 //   "PMWS1|" frames with CRC-16, EOT-terminated, 700 + 500 Hz dual square-wave attention tone.
 //
 // A transmission sends the same header burst 3 times for redundancy. The first copy a receiver
@@ -10,7 +10,7 @@
 export const PROTOCOL = Object.freeze({
   name: 'PMWS',
   magic: 'PMWS1',
-  baud: 700,
+  baud: 1200,
   markHz: 1300, // logical 1 / idle
   spaceHz: 2500, // logical 0
   leadInSec: 0.3,
@@ -19,7 +19,7 @@ export const PROTOCOL = Object.freeze({
   attnFreqs: [700, 500], // dual square-wave attention tone
   headers: 3,
   preambleHz: 350, // tone the RECEIVER plays while the header bursts arrive
-  gapSec: 1, // silence between redundant bursts
+  gapSec: 0.5, // silence between redundant bursts
   maxLocation: 80, // UTF-8 bytes
   maxMessage: 500, // UTF-8 bytes
   maxFrameBytes: 768, // demodulator buffer; > largest possible frame (~618 bytes)
@@ -207,7 +207,7 @@ function concat(parts) {
   return out;
 }
 
-export function repeatBursts(burst, sampleRate, count = 3, gapSec = 1) {
+export function repeatBursts(burst, sampleRate, count = 3, gapSec = PROTOCOL.gapSec) {
   const gap = new Float32Array(Math.round(sampleRate * gapSec));
   const parts = [];
   for (let i = 0; i < count; i++) {

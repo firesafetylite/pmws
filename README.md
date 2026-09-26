@@ -28,6 +28,11 @@ decodes activates it: the full alert screen appears and a 350 Hz tone plays whil
 copies arrive. After the 3rd copy (or a timeout if copies are lost), the tone stops and the
 alert is read aloud. Every burst carries a CRC-16.
 
+If copies arrive damaged, the receiver combines them (`js/repair.js`): the copies are lined up
+against each other (handling dropped or extra bytes), each byte is decided by majority vote, and
+the result is only accepted if it passes the CRC and frame checks. So an alert can get through
+even when no single copy was received cleanly. Repaired alerts are tagged "repaired".
+
 ### Shorthand compression
 Common alert words and phrases (e.g. "take shelter", "immediately", state names) are sent as
 1–2 byte codes (`js/codebook.js`) and expanded back to the exact original text by receivers.
@@ -53,4 +58,4 @@ transmitter or receivers, and the message is optional.
 
 ## Development
 Plain static files, no build step. Serve locally with `python3 -m http.server` and run
-`node test/modem.test.mjs && node test/echo.test.mjs && node test/limits.test.mjs && node test/speech.test.mjs && node test/codebook.test.mjs`.
+`node test/modem.test.mjs && node test/echo.test.mjs && node test/limits.test.mjs && node test/speech.test.mjs && node test/codebook.test.mjs && node test/repair.test.mjs`.

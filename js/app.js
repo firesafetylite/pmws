@@ -236,7 +236,7 @@ async function startRx() {
   const demod = new Demodulator(ac.sampleRate, {
     onByte: appendRaw,
     onFrame: onAlert,
-    onBadFrame: () => ($('rxStatus').textContent = 'Heard a damaged burst (CRC failed) — waiting for a repeat…'),
+    onBadFrame: () => ($('rxStatus').textContent = 'Heard a damaged copy (CRC failed) — will combine it with the other copies…'),
     onStatus: ({ quality, carrier, level }) => {
       $('mQual').style.width = `${Math.round(quality * 100)}%`;
       $('mLevel').style.width = `${Math.min(100, Math.round(level * 300))}%`;
@@ -361,10 +361,14 @@ function endPending() {
 
 function onHeader(f) {
   if (!$('rxTests').checked && isTest(f.type)) return;
+  // A repaired frame was rebuilt from several damaged copies: count all of them.
+  const n = f.repaired ? f.copiesUsed : 1;
+  const note = (p) => (p.repaired ? ' (repaired from damaged copies)' : '');
   if (pending?.alert.id === f.id) {
     // Redundant copy of the alert we're already receiving.
-    pending.copies++;
-    $('rxStatus').textContent = `Receiving alert ${f.id}… copy ${pending.copies}/${PROTOCOL.headers}`;
+    pending.copies += n;
+    if (f.repaired) pending.repaired = true;
+    $('rxStatus').textContent = `Receiving alert ${f.id}… copy ${Math.min(pending.copies, PROTOCOL.headers)}/${PROTOCOL.headers}${note(pending)}`;
     if (pending.copies >= PROTOCOL.headers) completeAlert();
     else armCopyTimer();
     return;
@@ -373,20 +377,22 @@ function onHeader(f) {
   endPending();
   pending = {
     alert: { id: f.id, type: f.type, location: f.location, expires: f.expires, message: f.message },
-    copies: 1,
+    copies: n,
+    repaired: !!f.repaired,
     timeoutMs: copyTimeoutMs(f),
     tone: ownIds.has(f.id) ? null : startPreambleTone(),
   };
   const own = ownIds.has(f.id);
-  const entry = { ...pending.alert, at: new Date(), own, expired: f.expires && f.expires < new Date() };
+  const entry = { ...pending.alert, at: new Date(), own, repaired: !!f.repaired, expired: f.expires && f.expires < new Date() };
   alerts.unshift(entry);
   alerts = alerts.slice(0, 50);
   saveLog();
   renderLog();
   showBanner(entry);
   $('alertBanner').classList.add('incoming');
-  $('rxStatus').textContent = `Receiving alert ${f.id}… copy 1/${PROTOCOL.headers}`;
-  armCopyTimer();
+  $('rxStatus').textContent = `Receiving alert ${f.id}… copy ${Math.min(n, PROTOCOL.headers)}/${PROTOCOL.headers}${note(pending)}`;
+  if (pending.copies >= PROTOCOL.headers) completeAlert();
+  else armCopyTimer();
   if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
     new Notification(`PMWS: ${typeName(f.type)}`, { body: `${f.location}\n${f.message}` });
   }
@@ -400,11 +406,11 @@ function armCopyTimer() {
 /** All copies received (or timed out): stop the tone, then read the alert aloud. */
 function completeAlert() {
   if (!pending) return;
-  const { alert: a, copies } = pending;
+  const { alert: a, copies, repaired } = pending;
   endPending();
   seen.set(`${a.id}:done`, Date.now());
   $('alertBanner').classList.remove('incoming');
-  $('rxStatus').textContent = `Alert received: ${typeName(a.type)} (ID ${a.id}, ${copies}/${PROTOCOL.headers} copies)`;
+  $('rxStatus').textContent = `Alert received: ${typeName(a.type)} (ID ${a.id}, ${Math.min(copies, PROTOCOL.headers)}/${PROTOCOL.headers} copies${repaired ? ', repaired from damaged copies' : ''})`;
 
   // TEST: tones only, no speech. Don't re-read our own broadcast or expired alerts.
   const own = ownIds.has(a.id);
@@ -482,6 +488,7 @@ function renderLog() {
     t.textContent = typeName(a.type);
     t.insertAdjacentHTML('beforeend', `<span class="tag sev-tag">${severity(a.type)}</span>`);
     if (a.own) t.insertAdjacentHTML('beforeend', '<span class="tag">own transmission</span>');
+    if (a.repaired) t.insertAdjacentHTML('beforeend', '<span class="tag">repaired</span>');
     if (expired) t.insertAdjacentHTML('beforeend', '<span class="tag">expired</span>');
     li.querySelector('.r').textContent = `received ${fmtTime(a.at)}`;
     li.querySelector('.m').textContent = `${a.location || '—'} · until ${fmtTime(a.expires)} · ID ${a.id}`;

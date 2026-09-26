@@ -55,9 +55,11 @@ export function crc16(bytes) {
 }
 
 import { compress, expand } from './codebook.js';
+import { repairCopies } from './repair.js';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder('utf-8', { fatal: false });
+const strictDec = new TextDecoder('utf-8', { fatal: true });
 const clean = (s) => String(s ?? '').replace(/[|\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
 
 /** UTF-8 byte length of a string. */
@@ -111,11 +113,16 @@ export function buildFrame(alert) {
   return enc.encode(body + crc + '\x04');
 }
 
-/** Uint8Array (without EOT) -> alert | null */
-export function parseFrame(bytes) {
-  const text = dec.decode(bytes);
+/**
+ * Uint8Array (without EOT) -> alert | null
+ * strict: also require valid UTF-8, no leading junk and well-formed fields. Used for repaired
+ * frames, where a wrong guess must not slip through on a lucky CRC match.
+ */
+export function parseFrame(bytes, { strict = false } = {}) {
+  let text;
+  try { text = (strict ? strictDec : dec).decode(bytes); } catch { return null; }
   const start = text.lastIndexOf(PROTOCOL.magic + '|');
-  if (start < 0) return null;
+  if (start < 0 || (strict && start !== 0)) return null;
   const t = text.slice(start);
   const cut = t.lastIndexOf('|');
   if (cut < 0) return null;
@@ -125,6 +132,8 @@ export function parseFrame(bytes) {
   if (crc16(enc.encode(body)) !== parseInt(crc, 16)) return null;
   const f = body.split('|');
   if (f.length < 7) return null;
+  if (strict && (f.length !== 7 || !/^[0-9A-F]{1,8}$/.test(f[1]) || !/^[A-Z]{4}$/.test(f[2]) ||
+    (f[4] && !parseExpiry(f[4])))) return null;
   return {
     id: f[1],
     type: f[2],
@@ -259,6 +268,9 @@ class Biquad {
 /**
  * Streaming non-coherent FSK demodulator + async UART + frame parser.
  * callbacks: onFrame(alert), onByte(byte), onBadFrame(bytes), onStatus({quality, carrier})
+ *
+ * Damaged copies (CRC failed) are kept for a while; once 2+ are held, they are combined
+ * (see repair.js) and a successful repair is reported via onFrame({...alert, repaired, copiesUsed}).
  */
 export class Demodulator {
   constructor(sampleRate, callbacks = {}) {
@@ -285,10 +297,11 @@ export class Demodulator {
     this.byte = 0;
     this.buf = [];
     this.lastByteAt = -1e12;
+    this.bad = []; // recent damaged copies: {bytes, at}
     this.qAcc = 0; this.qCnt = 0; this.carrierCnt = 0;
   }
 
-  reset() { this.state = 'idle'; this.buf = []; }
+  reset() { this.state = 'idle'; this.buf = []; this.bad = []; }
 
   process(samples) {
     const { rb, sum, N } = this;
@@ -330,7 +343,12 @@ export class Demodulator {
           this.next = n + this.spb * 0.5;
           this.state = 'start';
         }
-        if (this.buf.length && n - this.lastByteAt > this.spb * 60) this.buf = [];
+        if (this.buf.length && n - this.lastByteAt > this.spb * 60) {
+          // Silence with no EOT: the EOT itself was probably damaged. Treat as a damaged copy.
+          const bytes = Uint8Array.from(this.buf);
+          this.buf = [];
+          this.frameEnded(bytes);
+        }
         break;
       case 'start':
         if (n >= this.next) {
@@ -366,14 +384,45 @@ export class Demodulator {
     if (b === PROTOCOL.EOT) {
       const bytes = Uint8Array.from(this.buf);
       this.buf = [];
-      const alert = parseFrame(bytes);
-      if (alert) this.cb.onFrame?.(alert);
-      else if (bytes.length > 4) this.cb.onBadFrame?.(bytes);
+      this.frameEnded(bytes);
       return;
     }
     this.buf.push(b);
     const max = PROTOCOL.maxFrameBytes;
     if (this.buf.length > max) this.buf.splice(0, this.buf.length - max);
+  }
+
+  frameEnded(bytes) {
+    const alert = parseFrame(bytes);
+    if (alert) {
+      this.bad = []; // a clean copy got through; damaged ones are no longer needed
+      this.cb.onFrame?.(alert);
+      return;
+    }
+    // Shortest real frame (ENDM) is ~24 bytes; shorter bursts are noise picked up between copies.
+    if (bytes.length < 16) return;
+    this.cb.onBadFrame?.(bytes);
+    this.addBadCopy(bytes);
+  }
+
+  addBadCopy(bytes) {
+    // Keep copies from the last ~3 max-length bursts, similar in length (same message).
+    const windowSamples = this.sr * (3 * (burstSeconds(PROTOCOL.maxFrameBytes) + PROTOCOL.gapSec));
+    this.bad = this.bad.filter((c) => this.n - c.at < windowSamples);
+    this.bad.push({ bytes, at: this.n });
+    if (this.bad.length > 8) this.bad.shift();
+    // The latest copy plus up to 2 earlier ones of similar length (same frame).
+    const similar = this.bad
+      .filter((c) => Math.abs(c.bytes.length - bytes.length) <= Math.max(8, bytes.length * 0.25))
+      .slice(-PROTOCOL.headers);
+    if (similar.length < 2) return;
+    const fixed = repairCopies(similar.map((c) => c.bytes), {
+      parse: (b) => parseFrame(b, { strict: true }),
+      magic: enc.encode(PROTOCOL.magic + '|'),
+    });
+    if (!fixed) return;
+    this.bad = [];
+    this.cb.onFrame?.({ ...fixed.alert, repaired: true, copiesUsed: fixed.used });
   }
 }
 

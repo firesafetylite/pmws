@@ -21,8 +21,8 @@ export const PROTOCOL = Object.freeze({
   preambleHz: 350, // tone the RECEIVER plays while the header bursts arrive
   gapSec: 1, // silence between redundant bursts
   maxLocation: 80, // UTF-8 bytes
-  maxMessage: 280, // UTF-8 bytes
-  maxFrameBytes: 512, // demodulator buffer; > largest possible frame (~402 bytes)
+  maxMessage: 500, // UTF-8 bytes
+  maxFrameBytes: 768, // demodulator buffer; > largest possible frame (~618 bytes)
 });
 
 export const ALERT_TYPES = Object.freeze({

@@ -319,7 +319,7 @@ async function drainSpeech() {
 // (full alert screen + 350 Hz tone); the remaining copies are confirmations.
 let pending = null; // {alert, copies, tone, timer}
 // Wait for the next copy: one burst of this frame's length + inter-burst gap + margin.
-// (A max-size frame is ~402 bytes = ~6.1 s on air, so a fixed 7 s was too short.)
+// (A max-size frame is ~618 bytes = ~9.2 s on air, so a fixed timeout doesn't work.)
 const COPY_MARGIN_SEC = 1.5;
 const copyTimeoutMs = (f) => (burstSeconds(byteLength(f.raw) + 1) + PROTOCOL.gapSec + COPY_MARGIN_SEC) * 1000;
 const isTest = (t) => t === 'TEST';

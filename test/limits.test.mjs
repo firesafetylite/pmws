@@ -6,9 +6,9 @@ let fails = 0;
 const check = (ok, label) => { if (!ok) fails++; console.log(`${ok ? 'PASS' : 'FAIL'} ${label}`); };
 
 // truncateBytes never splits a code point and respects the byte budget
-const emoji = '🚨'.repeat(100); // 4 bytes each
-const t = truncateBytes(emoji, 281);
-check(byteLength(t) === 280 && t === '🚨'.repeat(70), 'truncateBytes keeps whole code points');
+const emoji = '🚨'.repeat(200); // 4 bytes each
+const t = truncateBytes(emoji, 501);
+check(byteLength(t) === 500 && t === '🚨'.repeat(125), 'truncateBytes keeps whole code points');
 
 // Worst-case frames (ASCII max, and multibyte max) fit the demodulator buffer and decode 3/3
 const cases = {

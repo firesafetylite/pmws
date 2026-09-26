@@ -1,12 +1,19 @@
 import {
   PROTOCOL, ALERT_TYPES, buildTransmission, Demodulator, newAlertId, encodeWav, concat,
+  byteLength, burstSeconds,
 } from './modem.js';
+import { spokenText } from './speech.js';
 
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fmtTime = (d) => (d ? d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—');
 const typeName = (t) => ALERT_TYPES[t]?.name ?? `Unknown (${t})`;
 const severity = (t) => ALERT_TYPES[t]?.severity ?? 'moderate';
+
+/** Replace a <select>'s options safely (labels come from the OS, never parse them as HTML). */
+function setOptions(sel, defaultLabel, items) {
+  sel.replaceChildren(new Option(defaultLabel, ''), ...items.map(([value, label]) => new Option(label, value)));
+}
 
 let ctx; // shared AudioContext
 function audio() {
@@ -21,8 +28,7 @@ function loadVoices() {
   voices = speechSynthesis.getVoices();
   const sel = $('txVoice');
   const prev = sel.value;
-  sel.innerHTML = '<option value="">System default</option>' +
-    voices.map((v, i) => `<option value="${i}">${v.name} (${v.lang})</option>`).join('');
+  setOptions(sel, 'System default', voices.map((v, i) => [String(i), `${v.name} (${v.lang})`]));
   if (prev) sel.value = prev;
 }
 if ('speechSynthesis' in window) {
@@ -41,9 +47,6 @@ function speak(text, { voiceIdx = $('txVoice').value, rate = +$('txRate').value 
   });
 }
 
-function spokenText(a) {
-  return `Attention. ${typeName(a.type)} for ${a.location || 'the area'}. ${a.message}`;
-}
 
 // ================================================================ TRANSMIT
 const typeSel = $('txType');
@@ -58,18 +61,31 @@ typeSel.innerHTML = Object.entries(ALERT_TYPES)
   $('txExp').value = new Date(d - off).toISOString().slice(0, 16);
 })();
 
-$('txMsg').addEventListener('input', (e) => { $('txCount').textContent = `${e.target.value.length}/${PROTOCOL.maxMessage}`; });
+// Limits are in UTF-8 bytes (what goes on air), not characters.
+const LIMITS = { txLoc: PROTOCOL.maxLocation, txMsg: PROTOCOL.maxMessage };
+function updateCount() {
+  const n = byteLength($('txMsg').value.trim());
+  const c = $('txCount');
+  c.textContent = `${n}/${PROTOCOL.maxMessage} bytes`;
+  c.classList.toggle('over', n > PROTOCOL.maxMessage);
+}
+$('txMsg').addEventListener('input', updateCount);
+updateCount();
 
 function validate() {
   const fields = [
     ['txLoc', (v) => v.trim(), 'Enter a location.'],
+    ['txLoc', (v) => byteLength(v.trim()) <= LIMITS.txLoc, `Location is too long (max ${LIMITS.txLoc} bytes; accented letters and emoji use more than one).`],
     ['txExp', (v) => v && !isNaN(new Date(v)), 'Choose when the alert expires.'],
     ['txMsg', (v) => v.trim() || typeSel.value === 'TEST', 'Enter a message.'],
+    ['txMsg', (v) => byteLength(v.trim()) <= LIMITS.txMsg, `Message is too long (max ${LIMITS.txMsg} bytes; accented letters and emoji use more than one).`],
   ];
   let firstBad = null;
+  const bad = new Set();
   for (const [id, ok, msg] of fields) {
     const el = $(id);
-    const good = !!ok(el.value);
+    const good = !bad.has(id) && !!ok(el.value);
+    if (!good) bad.add(id);
     el.setAttribute('aria-invalid', String(!good));
     if (!good && !firstBad) firstBad = [el, msg];
   }
@@ -179,8 +195,7 @@ async function listMics() {
     const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput');
     const sel = $('rxDev');
     const prev = sel.value;
-    sel.innerHTML = '<option value="">Default microphone</option>' +
-      devs.map((d, i) => `<option value="${d.deviceId}">${d.label || `Microphone ${i + 1}`}</option>`).join('');
+    setOptions(sel, 'Default microphone', devs.map((d, i) => [d.deviceId, d.label || `Microphone ${i + 1}`]));
     sel.value = prev;
   } catch {}
 }
@@ -303,7 +318,10 @@ async function drainSpeech() {
 // The same header is sent 3 times. The first copy decoded activates the receiver
 // (full alert screen + 350 Hz tone); the remaining copies are confirmations.
 let pending = null; // {alert, copies, tone, timer}
-const COPY_TIMEOUT_MS = 7000; // longest header burst (~4.7 s @ 700 baud) + gap + margin
+// Wait for the next copy: one burst of this frame's length + inter-burst gap + margin.
+// (A max-size frame is ~402 bytes = ~6.1 s on air, so a fixed 7 s was too short.)
+const COPY_MARGIN_SEC = 1.5;
+const copyTimeoutMs = (f) => (burstSeconds(byteLength(f.raw) + 1) + PROTOCOL.gapSec + COPY_MARGIN_SEC) * 1000;
 const isTest = (t) => t === 'TEST';
 
 function startPreambleTone() {
@@ -356,6 +374,7 @@ function onHeader(f) {
   pending = {
     alert: { id: f.id, type: f.type, location: f.location, expires: f.expires, message: f.message },
     copies: 1,
+    timeoutMs: copyTimeoutMs(f),
     tone: ownIds.has(f.id) ? null : startPreambleTone(),
   };
   const own = ownIds.has(f.id);
@@ -375,7 +394,7 @@ function onHeader(f) {
 
 function armCopyTimer() {
   clearTimeout(pending.timer);
-  pending.timer = setTimeout(completeAlert, COPY_TIMEOUT_MS); // remaining copies lost -> finish anyway
+  pending.timer = setTimeout(completeAlert, pending.timeoutMs); // remaining copies lost -> finish anyway
 }
 
 /** All copies received (or timed out): stop the tone, then read the alert aloud. */

@@ -28,6 +28,14 @@ decodes activates it: the full alert screen appears and a 350 Hz tone plays whil
 copies arrive. After the 3rd copy (or a timeout if copies are lost), the tone stops and the
 alert is read aloud. Every burst carries a CRC-16.
 
+### Spoken message
+Receivers (and the transmitter) read the alert as, e.g.:
+> Attention. Tornado Warning for the State of Kansas, effective until 9:30 PM. Take shelter now.
+
+The location gets "the" where needed and is title-cased if typed all lowercase or all caps.
+Only the time (local, 12-hour) is spoken, not the date. The message is capitalised and ended
+with a period.
+
 ### Test / Drill
 `TEST` alerts play only the tones (data bursts and attention tone). No text-to-speech on the
 transmitter or receivers, and the message is optional.
@@ -39,4 +47,4 @@ transmitter or receivers, and the message is optional.
 
 ## Development
 Plain static files, no build step. Serve locally with `python3 -m http.server` and run
-`node test/modem.test.mjs && node test/echo.test.mjs`.
+`node test/modem.test.mjs && node test/echo.test.mjs && node test/limits.test.mjs && node test/speech.test.mjs`.

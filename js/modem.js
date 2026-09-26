@@ -19,7 +19,10 @@ export const PROTOCOL = Object.freeze({
   attnFreqs: [700, 500], // dual square-wave attention tone
   headers: 3,
   preambleHz: 350, // tone the RECEIVER plays while the header bursts arrive
-  maxMessage: 280,
+  gapSec: 1, // silence between redundant bursts
+  maxLocation: 80, // UTF-8 bytes
+  maxMessage: 280, // UTF-8 bytes
+  maxFrameBytes: 512, // demodulator buffer; > largest possible frame (~402 bytes)
 });
 
 export const ALERT_TYPES = Object.freeze({
@@ -55,6 +58,26 @@ const enc = new TextEncoder();
 const dec = new TextDecoder('utf-8', { fatal: false });
 const clean = (s) => String(s ?? '').replace(/[|\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
 
+/** UTF-8 byte length of a string. */
+export const byteLength = (s) => enc.encode(String(s ?? '')).length;
+
+/** Truncate to at most maxBytes of UTF-8 without splitting a code point. */
+export function truncateBytes(s, maxBytes) {
+  let out = '', n = 0;
+  for (const ch of String(s ?? '')) {
+    const b = byteLength(ch);
+    if (n + b > maxBytes) break;
+    out += ch; n += b;
+  }
+  return out;
+}
+
+/** Air time of one burst (lead-in + 8N1 bytes + tail), in seconds. */
+export function burstSeconds(frameBytes) {
+  const { baud, leadInSec, tailSec } = PROTOCOL;
+  return (Math.ceil(leadInSec * baud) + frameBytes * 10 + Math.ceil(tailSec * baud)) / baud;
+}
+
 export function formatExpiry(date) {
   const d = new Date(date);
   const p = (n) => String(n).padStart(2, '0');
@@ -77,9 +100,9 @@ export function buildFrame(alert) {
       PROTOCOL.magic,
       clean(alert.id).slice(0, 8),
       clean(alert.type).toUpperCase().slice(0, 4),
-      clean(alert.location).slice(0, 80),
+      truncateBytes(clean(alert.location), PROTOCOL.maxLocation),
       alert.expires ? formatExpiry(alert.expires) : '',
-      clean(alert.message).slice(0, PROTOCOL.maxMessage),
+      truncateBytes(clean(alert.message), PROTOCOL.maxMessage),
     ].join('|') + '|';
   const b = enc.encode(body);
   const crc = crc16(b).toString(16).toUpperCase().padStart(4, '0');
@@ -198,7 +221,7 @@ export function repeatBursts(burst, sampleRate, count = 3, gapSec = 1) {
  * Returns {header, eom} audio (Float32Array).
  * header = 3 identical header bursts + [attention tone]
  */
-export function buildTransmission(alert, sampleRate, { gapSec = 1, attnSec = 6 } = {}) {
+export function buildTransmission(alert, sampleRate, { gapSec = PROTOCOL.gapSec, attnSec = 6 } = {}) {
   const silence = (s) => new Float32Array(Math.round(sampleRate * s));
   const n = PROTOCOL.headers;
   const parts = [repeatBursts(modulateBytes(buildFrame(alert), sampleRate), sampleRate, n, gapSec)];
@@ -347,7 +370,8 @@ export class Demodulator {
       return;
     }
     this.buf.push(b);
-    if (this.buf.length > 600) this.buf.splice(0, this.buf.length - 600);
+    const max = PROTOCOL.maxFrameBytes;
+    if (this.buf.length > max) this.buf.splice(0, this.buf.length - max);
   }
 }
 

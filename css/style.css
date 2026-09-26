@@ -106,6 +106,7 @@ code { color: var(--fg); background: var(--surface-2); border: 1px solid var(--b
 .field label, .label-row label { font-size: .875rem; font-weight: 600; color: var(--fg); }
 .label-row { display: flex; justify-content: space-between; align-items: baseline; }
 .counter { font-size: .8rem; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.counter.over { color: var(--sev-extreme); font-weight: 600; }
 .hint { font-size: .8rem; color: var(--fg-muted); }
 .row { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
 .w-rate { width: 96px; }

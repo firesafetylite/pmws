@@ -1,5 +1,5 @@
 import {
-  PROTOCOL, ALERT_TYPES, buildTransmission, Demodulator, newAlertId, encodeWav, concat,
+  PROTOCOL, ALERT_TYPES, buildTransmission, Demodulator, newAlertId, encodeWav,
   byteLength, burstSeconds,
 } from './modem.js';
 import { spokenText } from './speech.js';
@@ -143,7 +143,7 @@ $('txForm').addEventListener('submit', async (e) => {
   const a = readForm();
   if (!validate()) return;
   const ac = audio();
-  const { header, eom } = buildTransmission(a, ac.sampleRate, { attnSec: $('txAttn').checked ? 6 : 0 });
+  const { header } = buildTransmission(a, ac.sampleRate, { attnSec: $('txAttn').checked ? 6 : 0 });
   ownIds.add(a.id);
   txAbort = false;
   try {
@@ -156,10 +156,6 @@ $('txForm').addEventListener('submit', async (e) => {
       await speak(spokenText(a), { volume: +$('txVol').value });
       if (txAbort) return;
       await sleep(600);
-    }
-    if ($('txEom').checked) {
-      setTx(true, 'Sending end-of-message…');
-      await playBuffer(eom);
     }
   } finally {
     setTx(false, txAbort ? 'Stopped.' : `Broadcast complete (ID ${a.id}).`);
@@ -176,12 +172,12 @@ $('txWav').addEventListener('click', () => {
   const a = readForm();
   if (!validate()) return;
   const sr = 48000;
-  const { header, eom } = buildTransmission(a, sr, { attnSec: $('txAttn').checked ? 6 : 0 });
-  const wav = encodeWav(concat([header, new Float32Array(sr * 2), eom]), sr);
+  const { header } = buildTransmission(a, sr, { attnSec: $('txAttn').checked ? 6 : 0 });
+  const wav = encodeWav(header, sr);
   const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
   Object.assign(document.createElement('a'), { href: url, download: `pmws-${a.type}-${a.id}.wav` }).click();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
-  $('txStatus').textContent = 'WAV saved (data + attention tone + EOM; the TTS voice is added live by receivers).';
+  $('txStatus').textContent = 'WAV saved (data bursts + attention tone; the TTS voice is added live by receivers).';
 });
 
 // ================================================================ RECEIVE
@@ -235,7 +231,6 @@ async function startRx() {
   const demod = new Demodulator(ac.sampleRate, {
     onByte: appendRaw,
     onFrame: onAlert,
-    onEnd: onEndOfMessage,
     onBadFrame: () => ($('rxStatus').textContent = 'Heard a damaged copy (CRC failed) — will combine it with the other copies…'),
     onStatus: ({ quality, carrier, level }) => {
       $('mQual').style.width = `${Math.round(quality * 100)}%`;
@@ -312,6 +307,21 @@ async function drainSpeech() {
     await sleep(500);
   }
   speaking = false;
+  returnToNormal();
+}
+
+// ---------------------------------------------------------------- return to regular programming
+// There is no end-of-message signal. Once the alert has been read aloud, the receiver closes the
+// alert screen and goes back to listening. Alerts that aren't spoken (TEST, own, expired, speech
+// off) stay on screen for NO_SPEECH_HOLD_MS so they can still be read.
+const NO_SPEECH_HOLD_MS = 10000;
+let holdTimer = null;
+
+function returnToNormal() {
+  clearTimeout(holdTimer);
+  if (pending || speaking || speakQueue.length) return; // another alert is still in progress
+  if (!$('alertBanner').classList.contains('hidden')) closeBanner();
+  $('rxStatus').textContent = rx ? 'Listening…' : 'Not listening.';
 }
 
 // ---------------------------------------------------------------- redundant headers
@@ -418,6 +428,9 @@ function completeAlert() {
   if ($('rxSpeak').checked && !own && !expired && !isTest(a.type)) {
     speakQueue.push(a);
     drainSpeech();
+  } else {
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(returnToNormal, NO_SPEECH_HOLD_MS);
   }
 }
 
@@ -426,12 +439,6 @@ function onAlert(f) {
   for (const [k, t] of seen) if (now - t > 120000) seen.delete(k);
 
   onHeader(f);
-}
-
-/** "BBBB" heard (sent 3 times; later copies are harmless). */
-function onEndOfMessage() {
-  if (pending) completeAlert();
-  $('rxStatus').textContent = 'End of message.';
 }
 
 let lastFocus = null;
@@ -461,7 +468,7 @@ function showBanner(a) {
   $('bMsg').textContent = a.message;
 }
 
-function dismiss() { endPending(); closeBanner(); speechSynthesis?.cancel(); speakQueue.length = 0; }
+function dismiss() { clearTimeout(holdTimer); endPending(); closeBanner(); speechSynthesis?.cancel(); speakQueue.length = 0; }
 $('bDismiss').addEventListener('click', dismiss);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('alertBanner').classList.contains('hidden')) dismiss(); });
 

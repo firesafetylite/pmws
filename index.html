@@ -114,7 +114,6 @@
             <legend class="sr-only">Transmission parts</legend>
             <label class="switch"><input id="txAttn" type="checkbox" checked /><span>Attention tone</span></label>
             <label class="switch"><input id="txTts" type="checkbox" checked /><span>Speak message</span></label>
-            <label class="switch"><input id="txEom" type="checkbox" checked /><span>End-of-message bursts</span></label>
           </fieldset>
         </details>
 
@@ -214,7 +213,7 @@
             <tr><th scope="row">Headers</th><td>Same header sent 3× for redundancy. The first copy decoded activates receivers (alert screen + 350 Hz tone); the rest confirm it</td></tr>
             <tr><th scope="row">Attention</th><td>700 + 500 Hz dual square-wave tone</td></tr>
             <tr><th scope="row">Test / Drill</th><td>Tones only — no text-to-speech</td></tr>
-            <tr><th scope="row">End</th><td>3 × <code>BBBB</code></td></tr>
+            <tr><th scope="row">End</th><td>No end signal — receivers return to normal after the message is read aloud</td></tr>
           </tbody>
         </table>
       </div>

@@ -7,18 +7,17 @@ function run(sr, noise, gain = 1, label = '') {
     expires: new Date(Date.UTC(2030, 4, 6, 18, 30)),
     message: 'A tornado has been sighted near Main Street. Take shelter now in an interior room.',
   };
-  const { header, eom } = buildTransmission(alert, sr, { attnSec: 1 });
-  const sig = new Float32Array(sr + header.length + eom.length + sr);
-  sig.set(header, sr / 2); sig.set(eom, sr / 2 + header.length + sr / 2);
+  const { header } = buildTransmission(alert, sr, { attnSec: 1 });
+  const sig = new Float32Array(sr + header.length);
+  sig.set(header, sr / 2);
   for (let i = 0; i < sig.length; i++) sig[i] = sig[i] * gain + noise * (Math.random() * 2 - 1);
   const frames = [];
-  let eoms = 0;
-  const d = new Demodulator(sr, { onFrame: (f) => frames.push(f), onEnd: () => eoms++ });
+  const d = new Demodulator(sr, { onFrame: (f) => frames.push(f) });
   for (let i = 0; i < sig.length; i += 128) d.process(sig.subarray(i, i + 128));
   const ok = frames.filter((f) => f.type === 'TORW' && f.message === alert.message && f.location === alert.location && +f.expires === +alert.expires).length;
-  const pass = ok === 3 && eoms >= 1;
+  const pass = ok === 3;
   if (!pass) fails++;
-  console.log(`${pass ? 'PASS' : 'FAIL'} sr=${sr} noise=${noise} gain=${gain} ${label} headers=${ok}/3 eoms=${eoms}/3`);
+  console.log(`${pass ? 'PASS' : 'FAIL'} sr=${sr} noise=${noise} gain=${gain} ${label} headers=${ok}/3`);
 }
 for (const sr of [44100, 48000]) for (const n of [0, 0.1, 0.3]) run(sr, n);
 run(48000, 0.02, 0.05, '(quiet)');

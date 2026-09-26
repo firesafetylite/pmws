@@ -20,13 +20,17 @@ listen on the **microphone**, decode the bursts, show a full-screen alert and re
 | Mark / space | 1300 Hz / 2500 Hz |
 | Frame | `PMWS4\|id\|TYPE\|location\|YYYYMMDDTHHMMZ\|message\|CRC16` + EOT |
 | Attention | 700 + 500 Hz dual square-wave tone |
-| End | 3 × `BBBB` |
+| End | None: receivers return to normal after the message is read aloud |
 
 ### Headers
 Each transmission sends the **same header 3 times** (0.5 s apart) for redundancy. The first copy a receiver
 decodes activates it: the full alert screen appears and a 350 Hz tone plays while the remaining
 copies arrive. After the 3rd copy (or a timeout if copies are lost), the tone stops and the
 alert is read aloud. Every burst carries a CRC-16.
+
+There is no end-of-message signal. Once the alert has been read aloud, the receiver closes the
+alert screen and goes back to listening. Alerts that aren't spoken (`TEST`, expired, or speech
+turned off) stay on screen for 10 seconds first. Past alerts stay in the log.
 
 If copies arrive damaged, the receiver combines them (`js/repair.js`): the copies are lined up
 against each other (handling dropped or extra bytes), each byte is decided by majority vote, and

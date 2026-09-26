@@ -42,8 +42,7 @@ function speak(text, { voiceIdx = $('txVoice').value, rate = +$('txRate').value 
 }
 
 function spokenText(a) {
-  const exp = a.expires ? ` This alert is in effect until ${fmtTime(a.expires)}.` : '';
-  return `Attention. ${typeName(a.type)} for ${a.location || 'the area'}.${exp} ${a.message}`;
+  return `Attention. ${typeName(a.type)} for ${a.location || 'the area'}. ${a.message}`;
 }
 
 // ================================================================ TRANSMIT

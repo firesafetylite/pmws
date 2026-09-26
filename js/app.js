@@ -61,6 +61,25 @@ typeSel.innerHTML = Object.entries(ALERT_TYPES)
 
 $('txMsg').addEventListener('input', (e) => { $('txCount').textContent = `${e.target.value.length}/${PROTOCOL.maxMessage}`; });
 
+function validate() {
+  const fields = [
+    ['txLoc', (v) => v.trim(), 'Enter a location.'],
+    ['txExp', (v) => v && !isNaN(new Date(v)), 'Choose when the alert expires.'],
+    ['txMsg', (v) => v.trim(), 'Enter a message.'],
+  ];
+  let firstBad = null;
+  for (const [id, ok, msg] of fields) {
+    const el = $(id);
+    const good = !!ok(el.value);
+    el.setAttribute('aria-invalid', String(!good));
+    if (!good && !firstBad) firstBad = [el, msg];
+  }
+  if (firstBad) { firstBad[0].focus(); $('txStatus').textContent = firstBad[1]; return false; }
+  return true;
+}
+for (const id of ['txLoc', 'txExp', 'txMsg']) $(id).addEventListener('input', (e) => e.target.removeAttribute('aria-invalid'));
+$('txVol').addEventListener('input', (e) => { $('txVolOut').textContent = `${Math.round(e.target.value * 100)}%`; });
+
 function readForm() {
   return {
     id: newAlertId(),
@@ -99,7 +118,7 @@ function setTx(busy, msg) {
 $('txForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const a = readForm();
-  if (isNaN(a.expires)) return ($('txStatus').textContent = 'Invalid expiry.');
+  if (!validate()) return;
   const ac = audio();
   const { header, eom } = buildTransmission(a, ac.sampleRate, { attnSec: $('txAttn').checked ? 6 : 0 });
   ownIds.add(a.id);
@@ -132,7 +151,7 @@ $('txStop').addEventListener('click', () => {
 
 $('txWav').addEventListener('click', () => {
   const a = readForm();
-  if (!a.location || !a.message || isNaN(a.expires)) return ($('txStatus').textContent = 'Fill in all fields first.');
+  if (!validate()) return;
   const sr = 48000;
   const { header, eom } = buildTransmission(a, sr, { attnSec: $('txAttn').checked ? 6 : 0 });
   const wav = encodeWav(concat([header, new Float32Array(sr * 2), eom]), sr);
@@ -237,8 +256,8 @@ function drawScope() {
     if (!rx) return;
     rx.analyser.getByteFrequencyData(data);
     const W = cv.width, H = cv.height;
-    g.fillStyle = '#070c19'; g.fillRect(0, 0, W, H);
-    for (const [hz, col] of [[PROTOCOL.markHz, '#58d6c455'], [PROTOCOL.spaceHz, '#8b7bff55']]) {
+    g.fillStyle = '#070a12'; g.fillRect(0, 0, W, H);
+    for (const [hz, col] of [[PROTOCOL.markHz, '#3b82f655'], [PROTOCOL.spaceHz, '#f59e0b55']]) {
       g.fillStyle = col; g.fillRect((hz / maxHz) * W - 1, 0, 2, H);
     }
     g.beginPath();
@@ -246,8 +265,8 @@ function drawScope() {
       const x = (i / bins) * W, y = H - (data[i] / 255) * (H - 4);
       i ? g.lineTo(x, y) : g.moveTo(x, y);
     }
-    g.strokeStyle = '#58d6c4'; g.lineWidth = 1.5; g.stroke();
-    g.fillStyle = '#8e9bbb'; g.font = '10px system-ui';
+    g.strokeStyle = '#60a5fa'; g.lineWidth = 1.5; g.stroke();
+    g.fillStyle = '#a3b0c4'; g.font = '11px Inter, system-ui';
     g.fillText('mark 1300', (PROTOCOL.markHz / maxHz) * W + 4, 12);
     g.fillText('space 2500', (PROTOCOL.spaceHz / maxHz) * W + 4, 12);
     rx.raf = requestAnimationFrame(loop);
@@ -319,7 +338,7 @@ function armTimer(sec) {
     endPending();
     if (!gotHeader) {
       $('rxStatus').textContent = `Preamble ${id} heard but no alert data followed.`;
-      if (current?.id === id) { $('alertBanner').className = 'banner hidden'; current = null; }
+      if (current?.id === id) closeBanner(false);
     }
   }, sec * 1000);
 }
@@ -331,9 +350,7 @@ function onPreamble(a) {
   pending = { id: a.id, type, copies: 0, tone: ownIds.has(a.id) ? null : startPreambleTone() };
   armTimer(PROTOCOL.preambleTimeoutSec);
   current = { id: a.id };
-  const b = $('alertBanner');
-  b.className = `banner ${severity(type)} incoming`;
-  b.style.animation = '';
+  openBanner(`banner ${severity(type)} incoming`);
   $('bType').textContent = `Incoming: ${typeName(type)}`;
   $('bLoc').textContent = 'receiving…';
   $('bExp').textContent = 'receiving…';
@@ -364,10 +381,6 @@ function onAlert(a) {
   if (a.type === 'ENDM') {
     if (pending?.id === a.id) endPending();
     $('rxStatus').textContent = `End of message (ID ${a.id}).`;
-    if (current?.id === a.id) {
-      // keep banner visible but stop pulsing
-      $('alertBanner').style.animation = 'none';
-    }
     return;
   }
   if (!$('rxTests').checked && (a.type === 'TEST' || a.type === 'DRIL')) return;
@@ -395,11 +408,26 @@ function onAlert(a) {
   }
 }
 
+let lastFocus = null;
+function openBanner(cls) {
+  const b = $('alertBanner');
+  const wasHidden = b.classList.contains('hidden');
+  b.className = cls;
+  if (wasHidden) {
+    lastFocus = document.activeElement;
+    $('bDismiss').focus({ preventScroll: true });
+  }
+}
+function closeBanner(restoreFocus = true) {
+  $('alertBanner').className = 'banner hidden';
+  current = null;
+  if (restoreFocus && lastFocus?.focus) lastFocus.focus();
+  lastFocus = null;
+}
+
 function showBanner(a) {
   current = a;
-  const b = $('alertBanner');
-  b.className = `banner ${severity(a.type)}`;
-  b.style.animation = '';
+  openBanner(`banner ${severity(a.type)}`);
   $('bType').textContent = typeName(a.type) + (a.expired ? ' (expired)' : '');
   $('bLoc').textContent = a.location || '—';
   $('bExp').textContent = fmtTime(a.expires);
@@ -410,7 +438,9 @@ function waitForPendingThen(fn) {
   const id = setInterval(() => { if (!pending) { clearInterval(id); fn(); } }, 200);
 }
 
-$('bDismiss').addEventListener('click', () => { endPending(); $('alertBanner').className = 'banner hidden'; current = null; speechSynthesis?.cancel(); speakQueue.length = 0; });
+function dismiss() { endPending(); closeBanner(); speechSynthesis?.cancel(); speakQueue.length = 0; }
+$('bDismiss').addEventListener('click', dismiss);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('alertBanner').classList.contains('hidden')) dismiss(); });
 
 function saveLog() { localStorage.setItem('pmws-log', JSON.stringify(alerts)); }
 
@@ -427,14 +457,20 @@ function renderLog() {
       <div class="l-top"><span class="t"></span><span class="l-meta r"></span></div>
       <div class="l-meta m"></div>
       <p class="l-msg"></p>`;
+    li.tabIndex = 0;
+    li.setAttribute('role', 'button');
+    li.setAttribute('aria-label', `${typeName(a.type)}, ${a.location || 'no location'}. Show alert.`);
     const t = li.querySelector('.t');
     t.textContent = typeName(a.type);
+    t.insertAdjacentHTML('beforeend', `<span class="tag sev-tag">${severity(a.type)}</span>`);
     if (a.own) t.insertAdjacentHTML('beforeend', '<span class="tag">own transmission</span>');
     if (expired) t.insertAdjacentHTML('beforeend', '<span class="tag">expired</span>');
     li.querySelector('.r').textContent = `received ${fmtTime(a.at)}`;
-    li.querySelector('.m').textContent = `📍 ${a.location || '—'} · until ${fmtTime(a.expires)} · ID ${a.id}`;
+    li.querySelector('.m').textContent = `${a.location || '—'} · until ${fmtTime(a.expires)} · ID ${a.id}`;
     li.querySelector('.l-msg').textContent = a.message;
-    li.addEventListener('click', () => showBanner({ ...a, expired }));
+    const open = () => showBanner({ ...a, expired });
+    li.addEventListener('click', open);
+    li.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
     ul.appendChild(li);
   }
 }

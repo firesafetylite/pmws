@@ -23,7 +23,7 @@ const alert = { id: 'ABCD', type: 'TORW', location: 'Springfield County, Kansas'
 const frame = buildFrame(alert);
 const parsed = parseFrame(frame.subarray(0, frame.length - 1));
 check(parsed?.message === alert.message && parsed?.location === alert.location, 'frame round-trip restores original text');
-const plainLen = new TextEncoder().encode(`PMWS2|ABCD|TORW|${alert.location}|20310101T0000Z|${alert.message}|FFFF\x04`).length;
+const plainLen = new TextEncoder().encode(`PMWS3|ABCD|TORW|${alert.location}|20310101T0000Z|${alert.message}|FFFF\x04`).length;
 console.log(`     typical alert: ${plainLen} B -> ${frame.length} B, ${burstSeconds(plainLen).toFixed(2)} s -> ${burstSeconds(frame.length).toFixed(2)} s per copy`);
 
 // Over the air (with noise): compressed control bytes decode fine

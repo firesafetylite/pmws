@@ -1,7 +1,7 @@
 // PMWS modem — Public Mass Warning System
 //
-//   900 baud async UART (8N1) AFSK, mark 1300 Hz / space 2500 Hz, continuous-mark lead-in,
-//   "PMWS3|" frames (location + message shorthand-compressed, see codebook.js) with CRC-16, EOT-terminated, 700 + 500 Hz dual square-wave attention tone.
+//   700 baud async UART (8N1) AFSK, mark 1300 Hz / space 2500 Hz, continuous-mark lead-in,
+//   "PMWS4|" frames (location + message shorthand-compressed, see codebook.js) with CRC-16, EOT-terminated, 700 + 500 Hz dual square-wave attention tone.
 //
 // A transmission sends the same header burst 3 times for redundancy. The first copy a receiver
 // decodes activates it (alert screen + 350 Hz tone); the remaining copies are confirmations.
@@ -9,8 +9,8 @@
 
 export const PROTOCOL = Object.freeze({
   name: 'PMWS',
-  magic: 'PMWS3', // v3: 900 baud + codebook compression
-  baud: 900,
+  magic: 'PMWS4', // v4: 700 baud + codebook compression
+  baud: 700,
   markHz: 1300, // logical 1 / idle
   spaceHz: 2500, // logical 0
   leadInSec: 0.3,

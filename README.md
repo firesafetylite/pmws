@@ -16,9 +16,9 @@ listen on the **microphone**, decode the bursts, show a full-screen alert and re
 
 | | |
 |---|---|
-| Modulation | AFSK 900 baud, async 8N1 |
+| Modulation | AFSK 700 baud, async 8N1 |
 | Mark / space | 1300 Hz / 2500 Hz |
-| Frame | `PMWS3\|id\|TYPE\|location\|YYYYMMDDTHHMMZ\|message\|CRC16` + EOT |
+| Frame | `PMWS4\|id\|TYPE\|location\|YYYYMMDDTHHMMZ\|message\|CRC16` + EOT |
 | Attention | 700 + 500 Hz dual square-wave tone |
 | End | 3 × `ENDM` frame |
 

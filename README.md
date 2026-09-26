@@ -20,7 +20,7 @@ listen on the **microphone**, decode the bursts, show a full-screen alert and re
 | Mark / space | 1300 Hz / 2500 Hz |
 | Frame | `PMWS4\|id\|TYPE\|location\|YYYYMMDDTHHMMZ\|message\|CRC16` + EOT |
 | Attention | 700 + 500 Hz dual square-wave tone |
-| End | 3 × `ENDM` frame |
+| End | 3 × `BBBB` |
 
 ### Headers
 Each transmission sends the **same header 3 times** (0.5 s apart) for redundancy. The first copy a receiver

@@ -5,7 +5,7 @@
 //
 // A transmission sends the same header burst 3 times for redundancy. The first copy a receiver
 // decodes activates it (alert screen + 350 Hz tone); the remaining copies are confirmations.
-// Then the attention tone, TTS (not for TEST) and 3 ENDM bursts.
+// Then the attention tone, TTS (not for TEST) and 3 end-of-message bursts: plain "BBBB".
 
 export const PROTOCOL = Object.freeze({
   name: 'PMWS',
@@ -39,7 +39,6 @@ export const ALERT_TYPES = Object.freeze({
   WTHR: { name: 'Weather Advisory', severity: 'moderate' },
   INFO: { name: 'Information Bulletin', severity: 'minor' },
   TEST: { name: 'Test / Drill', severity: 'minor' },
-  ENDM: { name: 'End Of Message', severity: 'minor' },
 });
 
 // ---------------------------------------------------------------- framing
@@ -55,7 +54,7 @@ export function crc16(bytes) {
 }
 
 import { compress, expand } from './codebook.js';
-import { repairCopies } from './repair.js';
+import { repairCopies, alignTo } from './repair.js';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder('utf-8', { fatal: false });
@@ -111,6 +110,24 @@ export function buildFrame(alert) {
   const b = enc.encode(body);
   const crc = crc16(b).toString(16).toUpperCase().padStart(4, '0');
   return enc.encode(body + crc + '\x04');
+}
+
+// ---------------------------------------------------------------- end of message
+// The end-of-message burst is just the text "BBBB" + EOT (no ID, no CRC), sent 3 times.
+export const EOM_TEXT = 'BBBB';
+const EOM_BYTES = new TextEncoder().encode(EOM_TEXT);
+
+export function buildEomFrame() {
+  return Uint8Array.from([...EOM_BYTES, PROTOCOL.EOT]);
+}
+
+/** True if a burst (without EOT) is "BBBB", allowing 1 damaged/missing byte. */
+export function isEom(bytes) {
+  if (bytes.length > EOM_BYTES.length + 6) return false; // leading junk allowed, but not a frame
+  const { at } = alignTo(EOM_BYTES, bytes.subarray(-(EOM_BYTES.length + 1)));
+  let same = 0;
+  for (let i = 0; i < EOM_BYTES.length; i++) if (at[i] === EOM_BYTES[i]) same++;
+  return same >= EOM_BYTES.length - 1;
 }
 
 /**
@@ -238,8 +255,7 @@ export function buildTransmission(alert, sampleRate, { gapSec = PROTOCOL.gapSec,
   const parts = [repeatBursts(modulateBytes(buildFrame(alert), sampleRate), sampleRate, n, gapSec)];
   if (attnSec > 0) parts.push(silence(0.8), attentionTone(sampleRate, attnSec));
   const header = concat(parts);
-  const eomFrame = buildFrame({ id: alert.id, type: 'ENDM', location: '', expires: null, message: '' });
-  const eom = repeatBursts(modulateBytes(eomFrame, sampleRate), sampleRate, n, gapSec);
+  const eom = repeatBursts(modulateBytes(buildEomFrame(), sampleRate), sampleRate, n, gapSec);
   return { header, eom };
 }
 
@@ -267,7 +283,7 @@ class Biquad {
 
 /**
  * Streaming non-coherent FSK demodulator + async UART + frame parser.
- * callbacks: onFrame(alert), onByte(byte), onBadFrame(bytes), onStatus({quality, carrier})
+ * callbacks: onFrame(alert), onEnd(), onByte(byte), onBadFrame(bytes), onStatus({quality, carrier})
  *
  * Damaged copies (CRC failed) are kept for a while; once 2+ are held, they are combined
  * (see repair.js) and a successful repair is reported via onFrame({...alert, repaired, copiesUsed}).
@@ -393,13 +409,14 @@ export class Demodulator {
   }
 
   frameEnded(bytes) {
+    if (isEom(bytes)) { this.cb.onEnd?.(); return; }
     const alert = parseFrame(bytes);
     if (alert) {
       this.bad = []; // a clean copy got through; damaged ones are no longer needed
       this.cb.onFrame?.(alert);
       return;
     }
-    // Shortest real frame (ENDM) is ~24 bytes; shorter bursts are noise picked up between copies.
+    // Shortest alert frame is ~27 bytes; shorter bursts are noise picked up between copies.
     if (bytes.length < 16) return;
     this.cb.onBadFrame?.(bytes);
     this.addBadCopy(bytes);

@@ -51,7 +51,6 @@ function speak(text, { voiceIdx = $('txVoice').value, rate = +$('txRate').value 
 // ================================================================ TRANSMIT
 const typeSel = $('txType');
 typeSel.innerHTML = Object.entries(ALERT_TYPES)
-  .filter(([k]) => k !== 'ENDM')
   .map(([k, v]) => `<option value="${k}">${v.name} (${k})</option>`).join('');
 
 (function defaultExpiry() {
@@ -236,6 +235,7 @@ async function startRx() {
   const demod = new Demodulator(ac.sampleRate, {
     onByte: appendRaw,
     onFrame: onAlert,
+    onEnd: onEndOfMessage,
     onBadFrame: () => ($('rxStatus').textContent = 'Heard a damaged copy (CRC failed) — will combine it with the other copies…'),
     onStatus: ({ quality, carrier, level }) => {
       $('mQual').style.width = `${Math.round(quality * 100)}%`;
@@ -425,14 +425,13 @@ function onAlert(f) {
   const now = Date.now();
   for (const [k, t] of seen) if (now - t > 120000) seen.delete(k);
 
-  if (f.type === 'ENDM') {
-    if (seen.has(`${f.id}:ENDM`)) return;
-    seen.set(`${f.id}:ENDM`, now);
-    if (pending?.alert.id === f.id) completeAlert();
-    $('rxStatus').textContent = `End of message (ID ${f.id}).`;
-    return;
-  }
   onHeader(f);
+}
+
+/** "BBBB" heard (sent 3 times; later copies are harmless). */
+function onEndOfMessage() {
+  if (pending) completeAlert();
+  $('rxStatus').textContent = 'End of message.';
 }
 
 let lastFocus = null;

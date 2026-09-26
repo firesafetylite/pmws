@@ -227,8 +227,8 @@ async function startRx() {
       $('mQual').style.width = `${Math.round(quality * 100)}%`;
       $('mLevel').style.width = `${Math.min(100, Math.round(level * 300))}%`;
       $('led').className = `led ${carrier ? 'carrier' : 'listen'}`;
-      if (carrier) $('rxStatus').textContent = 'Receiving PMWS data…';
-      else if ($('rxStatus').textContent.startsWith('Receiving')) $('rxStatus').textContent = 'Listening…';
+      if (carrier && !pending) $('rxStatus').textContent = 'Receiving PMWS data…';
+      else if ($('rxStatus').textContent === 'Receiving PMWS data…') $('rxStatus').textContent = 'Listening…';
     },
   });
   node.port.onmessage = (e) => demod.process(e.data);
@@ -300,11 +300,11 @@ async function drainSpeech() {
   speaking = false;
 }
 
-// ---------------------------------------------------------------- progressive headers
-// Header 1/3 (ID + type) activates the receiver: alert screen + 350 Hz tone.
-// Header 2/3 adds location + effective-until, header 3/3 adds the message.
-let pending = null; // {alert, got:Set, tone, timer}
-const HEADER_TIMEOUT_MS = 8000; // longest header burst (~5 s) + gap + margin
+// ---------------------------------------------------------------- redundant headers
+// The same header is sent 3 times. The first copy decoded activates the receiver
+// (full alert screen + 350 Hz tone); the remaining copies are confirmations.
+let pending = null; // {alert, copies, tone, timer}
+const COPY_TIMEOUT_MS = 7000; // longest header burst (~4.7 s @ 700 baud) + gap + margin
 const isTest = (t) => t === 'TEST';
 
 function startPreambleTone() {
@@ -342,66 +342,58 @@ function endPending() {
   pending = null;
 }
 
-function renderIncoming() {
-  const { alert: a, got } = pending;
-  const n = PROTOCOL.headers;
-  openBanner(`banner ${severity(a.type)} incoming`);
-  $('bType').textContent = typeName(a.type);
-  $('bLoc').textContent = got.has(2) || got.has(3) ? a.location || '—' : 'receiving…';
-  $('bExp').textContent = got.has(2) || got.has(3) ? fmtTime(a.expires) : 'receiving…';
-  $('bId').textContent = a.id;
-  $('bMsg').textContent = got.has(3) ? a.message : 'Stand by — alert information is being received.';
-  $('rxStatus').textContent = `Receiving alert ${a.id}… header ${got.size}/${n}`;
-}
-
 function onHeader(f) {
   if (!$('rxTests').checked && isTest(f.type)) return;
-  if (!pending || pending.alert.id !== f.id) {
-    if (seen.has(`${f.id}:done`)) return; // already completed, ignore late repeats
-    endPending();
-    pending = {
-      alert: { id: f.id, type: f.type, location: '', expires: null, message: '' },
-      got: new Set(),
-      tone: ownIds.has(f.id) ? null : startPreambleTone(),
-    };
-    current = { id: f.id };
+  if (pending?.alert.id === f.id) {
+    // Redundant copy of the alert we're already receiving.
+    pending.copies++;
+    $('rxStatus').textContent = `Receiving alert ${f.id}… copy ${pending.copies}/${PROTOCOL.headers}`;
+    if (pending.copies >= PROTOCOL.headers) completeAlert();
+    else armCopyTimer();
+    return;
   }
-  if (pending.got.has(f.seq)) return;
-  pending.got.add(f.seq);
-  const a = pending.alert;
-  if (f.location) a.location = f.location;
-  if (f.expires) a.expires = f.expires;
-  if (f.message) a.message = f.message;
-  renderIncoming();
-  clearTimeout(pending.timer);
-  if (f.seq >= (f.of || PROTOCOL.headers)) completeAlert();
-  else pending.timer = setTimeout(completeAlert, HEADER_TIMEOUT_MS); // later header lost -> use what we have
-}
-
-function completeAlert() {
-  if (!pending) return;
-  const { alert: a, got } = pending;
+  if (seen.has(`${f.id}:done`)) return; // already handled, ignore late copies
   endPending();
-  seen.set(`${a.id}:done`, Date.now());
-  if (!got.has(3) && !a.message) a.message = '(Message not received.)';
-
-  const own = ownIds.has(a.id);
-  const expired = a.expires && a.expires < new Date();
-  const entry = { ...a, at: new Date(), own, expired };
+  pending = {
+    alert: { id: f.id, type: f.type, location: f.location, expires: f.expires, message: f.message },
+    copies: 1,
+    tone: ownIds.has(f.id) ? null : startPreambleTone(),
+  };
+  const own = ownIds.has(f.id);
+  const entry = { ...pending.alert, at: new Date(), own, expired: f.expires && f.expires < new Date() };
   alerts.unshift(entry);
   alerts = alerts.slice(0, 50);
   saveLog();
   renderLog();
   showBanner(entry);
-  $('rxStatus').textContent = `Alert received: ${typeName(a.type)} (ID ${a.id}, ${got.size}/${PROTOCOL.headers} headers)`;
+  $('alertBanner').classList.add('incoming');
+  $('rxStatus').textContent = `Receiving alert ${f.id}… copy 1/${PROTOCOL.headers}`;
+  armCopyTimer();
+  if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+    new Notification(`PMWS: ${typeName(f.type)}`, { body: `${f.location}\n${f.message}` });
+  }
+}
+
+function armCopyTimer() {
+  clearTimeout(pending.timer);
+  pending.timer = setTimeout(completeAlert, COPY_TIMEOUT_MS); // remaining copies lost -> finish anyway
+}
+
+/** All copies received (or timed out): stop the tone, then read the alert aloud. */
+function completeAlert() {
+  if (!pending) return;
+  const { alert: a, copies } = pending;
+  endPending();
+  seen.set(`${a.id}:done`, Date.now());
+  $('alertBanner').classList.remove('incoming');
+  $('rxStatus').textContent = `Alert received: ${typeName(a.type)} (ID ${a.id}, ${copies}/${PROTOCOL.headers} copies)`;
 
   // TEST: tones only, no speech. Don't re-read our own broadcast or expired alerts.
-  if ($('rxSpeak').checked && !own && !expired && !isTest(a.type) && got.has(3)) {
+  const own = ownIds.has(a.id);
+  const expired = a.expires && a.expires < new Date();
+  if ($('rxSpeak').checked && !own && !expired && !isTest(a.type)) {
     speakQueue.push(a);
     drainSpeech();
-  }
-  if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
-    new Notification(`PMWS: ${typeName(a.type)}`, { body: `${a.location}\n${a.message}` });
   }
 }
 
@@ -416,8 +408,6 @@ function onAlert(f) {
     $('rxStatus').textContent = `End of message (ID ${f.id}).`;
     return;
   }
-  // Frames without a sequence number are treated as a complete single header.
-  if (!f.seq) Object.assign(f, { seq: PROTOCOL.headers, of: PROTOCOL.headers });
   onHeader(f);
 }
 

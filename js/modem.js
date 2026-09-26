@@ -1,18 +1,16 @@
 // PMWS modem — Public Mass Warning System
 //
-//   600 baud async UART (8N1) AFSK, mark 1300 Hz / space 2500 Hz, continuous-mark lead-in,
+//   700 baud async UART (8N1) AFSK, mark 1300 Hz / space 2500 Hz, continuous-mark lead-in,
 //   "PMWS1|" frames with CRC-16, EOT-terminated, 700 + 500 Hz dual square-wave attention tone.
 //
-// A transmission sends 3 progressive header bursts:
-//   1/3  ID + type                         -> activates receivers (alert screen + 350 Hz tone)
-//   2/3  + location + effective-until
-//   3/3  + message (complete alert)
-// followed by the attention tone, TTS (not for TEST) and 3 ENDM bursts.
+// A transmission sends the same header burst 3 times for redundancy. The first copy a receiver
+// decodes activates it (alert screen + 350 Hz tone); the remaining copies are confirmations.
+// Then the attention tone, TTS (not for TEST) and 3 ENDM bursts.
 
 export const PROTOCOL = Object.freeze({
   name: 'PMWS',
   magic: 'PMWS1',
-  baud: 600,
+  baud: 700,
   markHz: 1300, // logical 1 / idle
   spaceHz: 2500, // logical 0
   leadInSec: 0.3,
@@ -72,14 +70,13 @@ export function newAlertId() {
   return Math.floor(Math.random() * 0x10000).toString(16).toUpperCase().padStart(4, '0');
 }
 
-/** alert: {id, type, seq, location, expires(Date), message} -> Uint8Array */
+/** alert: {id, type, location, expires(Date), message} -> Uint8Array */
 export function buildFrame(alert) {
   const body =
     [
       PROTOCOL.magic,
       clean(alert.id).slice(0, 8),
       clean(alert.type).toUpperCase().slice(0, 4),
-      clean(alert.seq ?? ''),
       clean(alert.location).slice(0, 80),
       alert.expires ? formatExpiry(alert.expires) : '',
       clean(alert.message).slice(0, PROTOCOL.maxMessage),
@@ -102,16 +99,13 @@ export function parseFrame(bytes) {
   if (!/^[0-9A-F]{4}$/.test(crc)) return null;
   if (crc16(enc.encode(body)) !== parseInt(crc, 16)) return null;
   const f = body.split('|');
-  if (f.length < 8) return null;
-  const sm = /^(\d)\/(\d)$/.exec(f[3]);
+  if (f.length < 7) return null;
   return {
     id: f[1],
     type: f[2],
-    seq: sm ? +sm[1] : 0,
-    of: sm ? +sm[2] : 0,
-    location: f[4],
-    expires: parseExpiry(f[5]),
-    message: f[6],
+    location: f[3],
+    expires: parseExpiry(f[4]),
+    message: f[5],
     raw: body + crc,
   };
 }
@@ -201,33 +195,17 @@ export function repeatBursts(burst, sampleRate, count = 3, gapSec = 1) {
 }
 
 /**
- * Progressive header frames: 1 = ID + type, 2 = + location/expiry, 3 = + message.
- */
-export function buildHeaderFrames(alert) {
-  const n = PROTOCOL.headers;
-  const base = { id: alert.id, type: alert.type };
-  return [
-    { ...base, seq: `1/${n}`, location: '', expires: null, message: '' },
-    { ...base, seq: `2/${n}`, location: alert.location, expires: alert.expires, message: '' },
-    { ...base, seq: `3/${n}`, location: alert.location, expires: alert.expires, message: alert.message },
-  ].map(buildFrame);
-}
-
-/**
  * Returns {header, eom} audio (Float32Array).
- * header = 3 progressive header bursts + [attention tone]
+ * header = 3 identical header bursts + [attention tone]
  */
 export function buildTransmission(alert, sampleRate, { gapSec = 1, attnSec = 6 } = {}) {
   const silence = (s) => new Float32Array(Math.round(sampleRate * s));
-  const parts = [];
-  buildHeaderFrames(alert).forEach((f, i) => {
-    if (i) parts.push(silence(gapSec));
-    parts.push(modulateBytes(f, sampleRate));
-  });
+  const n = PROTOCOL.headers;
+  const parts = [repeatBursts(modulateBytes(buildFrame(alert), sampleRate), sampleRate, n, gapSec)];
   if (attnSec > 0) parts.push(silence(0.8), attentionTone(sampleRate, attnSec));
   const header = concat(parts);
-  const eomFrame = buildFrame({ id: alert.id, type: 'ENDM', seq: '', location: '', expires: null, message: '' });
-  const eom = repeatBursts(modulateBytes(eomFrame, sampleRate), sampleRate, PROTOCOL.headers, gapSec);
+  const eomFrame = buildFrame({ id: alert.id, type: 'ENDM', location: '', expires: null, message: '' });
+  const eom = repeatBursts(modulateBytes(eomFrame, sampleRate), sampleRate, n, gapSec);
   return { header, eom };
 }
 
